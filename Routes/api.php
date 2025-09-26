@@ -3,6 +3,10 @@
 // Asumsi: $app adalah instance Slim\App
 
 use Slim\Routing\RouteCollectorProxy;
+require_once __DIR__ . '/../Controllers/AuthController.php';
+require_once __DIR__ . '/../Middleware/AuthMiddleware.php';
+require_once __DIR__ . '/../Middleware/RoleMiddleware.php';
+require_once __DIR__ . '/../Models/UserModel.php';
 
 // Import Middleware dan Controller
 // use App\Middleware\AuthMiddleware; 
@@ -22,10 +26,12 @@ $container['db'] = fn() => $db; // Asumsikan $db sudah di-setup dari Database.ph
 // 1. AUTH (Public Endpoints)
 // -----------------------------------------------------------
 $app->post('/register', function ($request, $response) use ($db) {
-    // return (new AuthController($db))->register($request, $response);
+    // AKTIFKAN KEMBALI PEMANGGILAN CONTROLLER
+    return (new AuthController($db))->register($request, $response); 
 });
 $app->post('/login', function ($request, $response) use ($db) {
-    // return (new AuthController($db))->login($request, $response);
+    // AKTIFKAN KEMBALI PEMANGGILAN CONTROLLER
+    return (new AuthController($db))->login($request, $response);
 });
 
 

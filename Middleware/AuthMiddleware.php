@@ -11,6 +11,7 @@ class AuthMiddleware {
     private $secretKey = 'YOUR_SUPER_SECRET_KEY'; // Ganti dengan key rahasia Anda
 
     public function __invoke(Request $request, RequestHandler $handler): Response {
+        require_once __DIR__ . '/../Utils/JWT.php'; 
         $response = new Response();
         $authHeader = $request->getHeaderLine('Authorization');
 
@@ -24,7 +25,7 @@ class AuthMiddleware {
 
         try {
             // Decode token
-            $decoded = JWT::decode($token, new Key($this->secretKey, 'HS256'));
+            $decoded = JWTUtility::decodeToken($token); 
 
             // Simpan data user (user_id dan role) ke request attribute
             // Controller dapat mengakses data ini melalui $request->getAttribute('user_data')

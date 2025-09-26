@@ -1,0 +1,111 @@
+server
+{
+    listen 80;
+    server_name api-travelers.karyadeveloperindonesia.com;
+    index index.php index.html index.htm default.php default.htm default.html;
+    root /www/wwwroot/api-travelers.karyadeveloperindonesia.com;
+
+    #SSL-START SSL related configuration, do NOT delete or modify the next line of commented-out 404 rules
+    #error_page 404/404.html;
+    #SSL-END
+
+    #ERROR-PAGE-START  Error page configuration, allowed to be commented, deleted or modified
+    error_page 404 /404.html;
+    error_page 502 /502.html;
+    #ERROR-PAGE-END
+
+    #PHP-INFO-START  PHP reference configuration, allowed to be commented, deleted or modified
+    include enable-php-84.conf;
+    #PHP-INFO-END
+
+    #REWRITE-START URL rewrite rule reference, any modification will invalidate the rewrite rules set by the panel
+    include /www/server/panel/vhost/rewrite/api-travelers.karyadeveloperindonesia.com.conf;
+    #REWRITE-END
+
+    # Forbidden files or directories
+    location ~ ^/(\.user.ini|\.htaccess|\.git|\.env|\.svn|\.project|LICENSE|README.md)
+    {
+        return 404;
+    }
+
+    # Directory verification related settings for one-click application for SSL certificate
+    location ~ \.well-known{
+        allow all;
+    }
+
+    #Prohibit putting sensitive files in certificate verification directory
+    if ( $uri ~ "^/\.well-known/.*\.(php|jsp|py|js|css|lua|ts|go|zip|tar\.gz|rar|7z|sql|bak)$" ) {
+        return 403;
+    }
+
+    location ~ .*\.(gif|jpg|jpeg|png|bmp|swf)$
+    {
+        expires      30d;
+        error_log /dev/null;
+        access_log /dev/null;
+    }
+
+    location ~ .*\.(js|css)?$
+    {
+        expires      12h;
+        error_log /dev/null;
+        access_log /dev/null; 
+    }
+    access_log  /www/wwwlogs/api-travelers.karyadeveloperindonesia.com.log;
+    error_log  /www/wwwlogs/api-travelers.karyadeveloperindonesia.com.error.log;
+}server
+{
+    listen 80;
+    server_name api-travelers.karyadeveloperindonesia.com;
+    index index.php index.html index.htm default.php default.htm default.html;
+    root /www/wwwroot/api-travelers.karyadeveloperindonesia.com;
+
+    #SSL-START SSL related configuration, do NOT delete or modify the next line of commented-out 404 rules
+    #error_page 404/404.html;
+    #SSL-END
+
+    #ERROR-PAGE-START  Error page configuration, allowed to be commented, deleted or modified
+    error_page 404 /404.html;
+    error_page 502 /502.html;
+    #ERROR-PAGE-END
+
+    #PHP-INFO-START  PHP reference configuration, allowed to be commented, deleted or modified
+    include enable-php-84.conf;
+    #PHP-INFO-END
+
+    #REWRITE-START URL rewrite rule reference, any modification will invalidate the rewrite rules set by the panel
+    include /www/server/panel/vhost/rewrite/api-travelers.karyadeveloperindonesia.com.conf;
+    #REWRITE-END
+
+    # Forbidden files or directories
+    location ~ ^/(\.user.ini|\.htaccess|\.git|\.env|\.svn|\.project|LICENSE|README.md)
+    {
+        return 404;
+    }
+
+    # Directory verification related settings for one-click application for SSL certificate
+    location ~ \.well-known{
+        allow all;
+    }
+
+    #Prohibit putting sensitive files in certificate verification directory
+    if ( $uri ~ "^/\.well-known/.*\.(php|jsp|py|js|css|lua|ts|go|zip|tar\.gz|rar|7z|sql|bak)$" ) {
+        return 403;
+    }
+
+    location ~ .*\.(gif|jpg|jpeg|png|bmp|swf)$
+    {
+        expires      30d;
+        error_log /dev/null;
+        access_log /dev/null;
+    }
+
+    location ~ .*\.(js|css)?$
+    {
+        expires      12h;
+        error_log /dev/null;
+        access_log /dev/null; 
+    }
+    access_log  /www/wwwlogs/api-travelers.karyadeveloperindonesia.com.log;
+    error_log  /www/wwwlogs/api-travelers.karyadeveloperindonesia.com.error.log;
+}
