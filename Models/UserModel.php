@@ -31,6 +31,17 @@ class UserModel {
         return false;
     }
 
+    public function updatePassword(int $userId, string $hashedPassword): bool {
+        $stmt = $this->db->prepare("
+            UPDATE users SET password = :password WHERE id = :user_id
+        ");
+        
+        $stmt->bindParam(':password', $hashedPassword);
+        $stmt->bindParam(':user_id', $userId);
+
+        return $stmt->execute();
+    }
+
     // Metode CRUD lainnya (get, update, delete)...
 }
 ?>

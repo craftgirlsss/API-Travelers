@@ -26,12 +26,20 @@ $container['db'] = fn() => $db; // Asumsikan $db sudah di-setup dari Database.ph
 // 1. AUTH (Public Endpoints)
 // -----------------------------------------------------------
 $app->post('/register', function ($request, $response) use ($db) {
-    // AKTIFKAN KEMBALI PEMANGGILAN CONTROLLER
     return (new AuthController($db))->register($request, $response); 
 });
 $app->post('/login', function ($request, $response) use ($db) {
-    // AKTIFKAN KEMBALI PEMANGGILAN CONTROLLER
     return (new AuthController($db))->login($request, $response);
+});
+
+$app->post('/forgot-password', function ($request, $response) use ($db) {
+    return (new AuthController($db))->forgotPassword($request, $response);
+});
+$app->post('/verify-otp', function ($request, $response) use ($db) {
+    return (new AuthController($db))->verifyOTP($request, $response);
+});
+$app->post('/reset-password', function ($request, $response) use ($db) {
+    return (new AuthController($db))->resetPassword($request, $response);
 });
 
 
