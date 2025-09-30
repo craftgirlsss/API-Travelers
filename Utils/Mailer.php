@@ -85,4 +85,22 @@ class MailerUtility {
         ";
         return self::sendEmail($toEmail, $subject, $body);
     }
+
+    public static function sendRegistrationNotification(string $toEmail, string $userName): bool {
+        $subject = "Selamat datang di Travelers! Akun Anda Telah Berhasil Dibuat.";
+        $body = "
+            <html>
+            <body>
+                <h2>Selamat Datang, {$userName}!</h2>
+                <p>Terima kasih telah mendaftar di platform Travelers.</p>
+                <p>Akun Anda dengan email: <strong>{$toEmail}</strong> telah berhasil dibuat.</p>
+                <p>Anda sekarang dapat login dan mulai menjelajahi atau mendaftar sebagai penyedia perjalanan.</p>
+                <p>Jika Anda tidak merasa mendaftar di Travelers, harap segera balas email ini atau hubungi tim dukungan kami di <a href='mailto:info@karyadeveloperindonesia.com'>info@karyadeveloperindonesia.com</a>.</p>
+                <p>Selamat Berpetualang!</p>
+                <p>Hormat kami,<br>Tim Travelers</p>
+            </body>
+            </html>
+        ";
+        return self::sendEmail($toEmail, $subject, $body);
+    }
 }

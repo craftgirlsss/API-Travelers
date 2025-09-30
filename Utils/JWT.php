@@ -6,8 +6,7 @@ use Firebase\JWT\Key;
 
 class JWTUtility {
     // Kunci Rahasia untuk menandatangani token. HARUS dirahasiakan!
-    // Ganti dengan string acak yang panjang dan kompleks di lingkungan produksi.
-    private static string $secret_key = 'K3yR4h4s!aOp3nT!pKu_2025_#P0K0KNYAAMAN';
+    private static string $secret_key = '2ec5b8458f468b58b6bf849bdcad6200';
     
     // Algoritma yang digunakan (HS256 adalah standar)
     private static string $algorithm = 'HS256';
@@ -15,20 +14,22 @@ class JWTUtility {
     /**
      * Menghasilkan token JWT baru.
      *
-     * @param int $userId ID pengguna yang login.
+     * @param int $userId ID pengguna yang login (internal).
      * @param string $role Peran pengguna ('admin', 'provider', 'customer').
+     * @param string $uuid UUID pengguna (publik). <--- ARGUMEN KETIGA DITAMBAHKAN
      * @return string Token JWT yang sudah di-encode.
      */
-    public static function generateToken(int $userId, string $role): string {
+    public static function generateToken(int $userId, string $role, string $uuid): string { // <--- EDIT DI SINI
         $issuedAt = time();
-        $expirationTime = $issuedAt + (3600 * 24); // Token berlaku 24 jam (3600 detik * 24 jam)
+        $expirationTime = $issuedAt + (3600 * 24); // Token berlaku 24 jam
         
         $payload = [
             'iss' => "OpenTripku-API", // Issuer (penerbit token)
             'aud' => "Customer/Provider/Admin", // Audience (penerima token)
             'iat' => $issuedAt, // Issued At (waktu pembuatan)
             'exp' => $expirationTime, // Expiration Time (waktu kadaluarsa)
-            'user_id' => $userId, // Data spesifik user
+            'user_id' => $userId, // Data spesifik user (internal ID)
+            'uuid' => $uuid, // <--- UUID DITAMBAHKAN KE PAYLOAD
             'role' => $role // Data peran user
         ];
 
@@ -36,7 +37,6 @@ class JWTUtility {
             // Encode payload menjadi token JWT
             return JWT::encode($payload, self::$secret_key, self::$algorithm);
         } catch (\Exception $e) {
-            // Dalam kasus nyata, log error ini, jangan tampilkan ke user.
             throw new \RuntimeException("Failed to generate JWT token: " . $e->getMessage());
         }
     }

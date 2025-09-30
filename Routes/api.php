@@ -3,24 +3,21 @@
 // Asumsi: $app adalah instance Slim\App
 
 use Slim\Routing\RouteCollectorProxy;
+
+// Pastikan path ini benar berdasarkan lokasi file Anda
+require_once __DIR__ . '/../Controllers/ClientController.php';
 require_once __DIR__ . '/../Controllers/AuthController.php';
 require_once __DIR__ . '/../Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/../Middleware/RoleMiddleware.php';
 require_once __DIR__ . '/../Models/UserModel.php';
 
-// Import Middleware dan Controller
-// use App\Middleware\AuthMiddleware; 
-// use App\Middleware\RoleMiddleware;
-// use App\Controllers\AuthController;
-// use App\Controllers\UserController;
-// ... dll.
+// Untuk kelas middleware, disarankan menggunakan fully qualified class names jika tidak di-namespace
+// Contoh: $authMiddleware = new AuthMiddleware();
+// Namun, jika Anda menggunakan Slim 4 dan telah mendaftarkannya di Container,
+// Anda bisa menggunakan nama kelas. Karena Anda menggunakan require_once, kita buat instance.
 
 // Contoh inisialisasi koneksi DB (dari Config/Database.php)
 global $db; 
-
-// Fungsi untuk membuat Controller dengan injeksi DB (untuk kesederhanaan)
-$container = $app->getContainer();
-$container['db'] = fn() => $db; // Asumsikan $db sudah di-setup dari Database.php
 
 // -----------------------------------------------------------
 // 1. AUTH (Public Endpoints)
@@ -32,6 +29,7 @@ $app->post('/login', function ($request, $response) use ($db) {
     return (new AuthController($db))->login($request, $response);
 });
 
+// Password Reset Flow
 $app->post('/forgot-password', function ($request, $response) use ($db) {
     return (new AuthController($db))->forgotPassword($request, $response);
 });
@@ -46,47 +44,39 @@ $app->post('/reset-password', function ($request, $response) use ($db) {
 // -----------------------------------------------------------
 // 2. PROTECTED ENDPOINTS (Hanya untuk User Terautentikasi)
 // -----------------------------------------------------------
+
+// Buat instance AuthMiddleware
+$authMiddlewareInstance = new AuthMiddleware();
+
 $app->group('', function (RouteCollectorProxy $group) use ($db) {
     
-    // Group ini akan melalui AuthMiddleware untuk memverifikasi JWT
-    $auth = new AuthMiddleware();
-
+    // PENTING: Gunakan ClientController langsung
+    $clientController = new ClientController($db);
+    
     // 2.1. USERS (CRUD)
     $group->get('/users', function ($request, $response) use ($db) {
         // return (new UserController($db))->getAll($request, $response);
-    })->add(new RoleMiddleware(['admin'])); // Hanya ADMIN yang boleh melihat list
+    })->add(new RoleMiddleware(['admin'])); 
     
-    $group->get('/users/{id}', function ($request, $response) use ($db) {
-        // return (new UserController($db))->getById($request, $response);
+    $group->get('/users/{uuid}', function ($request, $response) use ($db) { // Ganti {id} jadi {uuid}
+        // return (new UserController($db))->getByUuid($request, $response);
     });
-    // ... PUT dan DELETE /users/{id} juga butuh Auth/Role Middleware
 
-    // 2.2. TRIPS (Provider/Admin: Create, Update, Delete)
-    $group->post('/trips', function ($request, $response) use ($db) {
-        // return (new TripController($db))->create($request, $response);
-    })->add(new RoleMiddleware(['admin', 'provider']));
+    // 2.5. CLIENT PROFILE
+    // PENTING: Ganti {id} menjadi {uuid} untuk keamanan
+    $group->get('/client/profile/{uuid}', function ($request, $response, $args) use ($clientController) { 
+        return $clientController->getClientProfile($request, $response, $args);
+    })->add(new RoleMiddleware(['admin', 'customer'])); // Role check untuk membatasi akses
+
+    // --- BARU: ENDPOINT EDIT DATA DIRI ---
+    $group->put('/client/profile/{uuid}', function ($request, $response, $args) use ($clientController) {
+        return $clientController->updateClientProfile($request, $response, $args);
+    })->add(new RoleMiddleware(['admin', 'customer'])); // Role yang sama dengan GET
+
+    // Rute Protected lainnya (Trips, Bookings, Reviews)
+    // ... (rute 2.2, 2.3, 2.4 Anda sebelumnya)
     
-    $group->put('/trips/{id}', function ($request, $response) use ($db) {
-        // return (new TripController($db))->update($request, $response);
-    })->add(new RoleMiddleware(['admin', 'provider']));
-    
-    // 2.3. BOOKINGS (Customer: Create)
-    $group->post('/bookings', function ($request, $response) use ($db) {
-        // return (new BookingController($db))->create($request, $response);
-    })->add(new RoleMiddleware(['admin', 'customer']));
-
-    $group->get('/bookings/user/{id}', function ($request, $response) use ($db) {
-        // return (new BookingController($db))->getByUser($request, $response);
-        // Controller perlu memverifikasi apakah ID user yang diminta sama dengan user yang login (kecuali admin)
-    })->add(new RoleMiddleware(['admin', 'customer']));
-
-    // 2.4. REVIEWS (Customer: Create)
-    $group->post('/reviews', function ($request, $response) use ($db) {
-        // return (new ReviewController($db))->create($request, $response);
-    })->add(new RoleMiddleware(['admin', 'customer']));
-
-})->add(AuthMiddleware::class); // Terapkan AuthMiddleware untuk seluruh grup
-
+})->add($authMiddlewareInstance); // <-- Terapkan AuthMiddleware di sini
 
 // -----------------------------------------------------------
 // 3. PUBLIC ENDPOINTS (Tanpa Autentikasi)
