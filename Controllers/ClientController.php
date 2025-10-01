@@ -15,62 +15,88 @@ class ClientController {
         $this->userModel = new UserModel($db);
     }
 
+    /**
+     * Parse JSON input dengan error handling.
+     */
     private function parseJsonInput(Request $request): array {
         $data = $request->getParsedBody();
+
         if (is_null($data) || empty($data)) {
-            $content = $request->getBody()->getContents(); 
-            $data = json_decode($content, true); 
-            $request->getBody()->rewind(); 
-            if (is_null($data)) { $data = []; }
+            $content = (string)$request->getBody();
+            $data = json_decode($content, true);
+
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new \RuntimeException("Invalid JSON: " . json_last_error_msg());
+            }
+
+            $request->getBody()->rewind();
         }
-        return $data;
+
+        return $data ?? [];
     }
 
     /**
      * Endpoint: PUT /client/profile/{uuid}
      */
     public function updateClientProfile(Request $request, Response $response, array $args): Response {
-        $data = $this->parseJsonInput($request);
+        try {
+            $data = $this->parseJsonInput($request);
+        } catch (\RuntimeException $e) {
+            $response->getBody()->write(json_encode([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ]));
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        }
+
         $requestedUserUuid = $args['uuid'] ?? null;
-        
-        // Cek data otentikasi
+
+        // --- 1. OTORISASI ---
         $jwtData = $request->getAttribute('jwt_data'); 
         $authenticatedUserUuid = $jwtData['uuid'] ?? null;
         $authenticatedUserId = $jwtData['id'] ?? null;
         $authenticatedUserRole = $jwtData['role'] ?? 'guest';
 
-        // --- 1. OTORISASI ---
         $isAccessAllowed = (
             $authenticatedUserRole === 'admin' || 
             $authenticatedUserUuid === $requestedUserUuid
         );
 
         if (!$isAccessAllowed) {
-            $response->getBody()->write(json_encode(['status' => 'error', 'message' => 'Unauthorized access. You can only update your own profile.']));
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'message' => 'Unauthorized access. You can only update your own profile.'
+            ]));
             return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
         }
-        // Pastikan kita punya ID internal user yang akan di-update
+
+        // --- 2. CEK USER TARGET ---
         $userToUpdate = $this->userModel->findByUuid($requestedUserUuid);
         if (!$userToUpdate || $userToUpdate['role'] !== 'customer') {
-            $response->getBody()->write(json_encode(['status' => 'error', 'message' => 'Invalid user or cannot edit non-client profile.']));
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'message' => 'Invalid user or cannot edit non-client profile.'
+            ]));
             return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
         }
         $targetUserId = (int)$userToUpdate['id'];
-        
-        // --- 2. VALIDASI INPUT DASAR ---
+
+        // --- 3. VALIDASI INPUT DASAR ---
         if (empty($data['name']) || empty($data['gender']) || empty($data['address'])) {
-            $response->getBody()->write(json_encode(['status' => 'error', 'message' => 'Name, gender, and address are required fields.']));
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'message' => 'Name, gender, and address are required fields.'
+            ]));
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
         }
-        
-        // Data yang akan di-update di tabel `users`
+
+        // --- 4. UPDATE DATA ---
         $updateBasicSuccess = $this->userModel->updateBasicData(
             $targetUserId,
             $data['name'], 
-            $data['phone'] ?? $userToUpdate['phone'] // Ambil phone lama jika tidak dikirim
+            $data['phone'] ?? $userToUpdate['phone']
         );
-        
-        // Data yang akan di-update/buat di tabel `client_details`
+
         $clientDetailsData = [
             'gender' => $data['gender'],
             'birth_date' => $data['birth_date'] ?? null, 
@@ -81,11 +107,9 @@ class ClientController {
             'profile_picture_url' => $data['profile_picture_url'] ?? null,
         ];
 
-        // Lakukan update detail
         $updateDetailsSuccess = $this->clientDetailModel->updateOrCreate($targetUserId, $clientDetailsData);
 
         if ($updateBasicSuccess || $updateDetailsSuccess) {
-            // Ambil data terbaru untuk respons
             $updatedData = $this->clientDetailModel->getClientDetailByUuid($requestedUserUuid);
 
             $response->getBody()->write(json_encode([
@@ -95,7 +119,7 @@ class ClientController {
             ]));
             return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
         }
-        
+
         $response->getBody()->write(json_encode([
             'status' => 'error', 
             'message' => 'Update failed. Data might be the same or a server error occurred.'
@@ -105,55 +129,54 @@ class ClientController {
 
     /**
      * Endpoint: GET /client/profile/{uuid}
-     * Membutuhkan AuthMiddleware sebelumnya.
      */
     public function getClientProfile(Request $request, Response $response, array $args): Response {
-        
-        // UUID user yang diminta dari URL (contoh: a1b2c3d4-e5f6...)
         $requestedUserUuid = $args['uuid'] ?? null; 
 
         if (!$requestedUserUuid) {
-            $response->getBody()->write(json_encode(['status' => 'error', 'message' => 'User identifier (UUID) is required.']));
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'message' => 'User identifier (UUID) is required.'
+            ]));
             return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
         }
 
-        // --- KONTROL AKSES / OTORISASI (Data dari AuthMiddleware) ---
-        // AuthMiddleware sudah melampirkan payload JWT: user_id, uuid, role
         $jwtData = $request->getAttribute('jwt_data'); 
         $authenticatedUserUuid = $jwtData['uuid'] ?? null;
         $authenticatedUserRole = $jwtData['role'] ?? 'guest';
 
-        // Logika Keamanan: Admin (boleh melihat semua) ATAU User harus melihat profilnya sendiri.
         $isAccessAllowed = (
             $authenticatedUserRole === 'admin' || 
             $authenticatedUserUuid === $requestedUserUuid
         );
 
         if (!$isAccessAllowed) {
-            $response->getBody()->write(json_encode(['status' => 'error', 'message' => 'Unauthorized access. You can only view your own profile.']));
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'message' => 'Unauthorized access. You can only view your own profile.'
+            ]));
             return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
         }
-        // --- AKHIR KONTROL AKSES ---
 
-        // 1. Ambil Detail Klien (JOIN users dan client_details)
         $detail = $this->clientDetailModel->getClientDetailByUuid($requestedUserUuid); 
 
         if ($detail) {
-            // Skenario A: Detail lengkap ditemukan
-            $response->getBody()->write(json_encode(['status' => 'success', 'data' => $detail]));
+            $response->getBody()->write(json_encode([
+                'status' => 'success',
+                'data' => $detail
+            ]));
             return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
         } 
         
-        // 2. Jika client_details TIDAK ditemukan, ambil data dasar dari tabel users
         $user = $this->userModel->findByUuid($requestedUserUuid); 
-
         if (!$user) {
-             // UUID tidak valid atau tidak ada di database
-             $response->getBody()->write(json_encode(['status' => 'error', 'message' => 'User not found.']));
+             $response->getBody()->write(json_encode([
+                 'status' => 'error', 
+                 'message' => 'User not found.'
+             ]));
              return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
         }
         
-        // Skenario B: Detail klien belum diisi, kembalikan data dasar user
         $output = [
             'status' => 'success', 
             'data' => [

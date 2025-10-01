@@ -6,17 +6,13 @@ use Slim\Routing\RouteCollectorProxy;
 
 // Pastikan path ini benar berdasarkan lokasi file Anda
 require_once __DIR__ . '/../Controllers/ClientController.php';
+require_once __DIR__ . '/../Controllers/BookingController.php';
+require_once __DIR__ . '/../Controllers/TripController.php';
 require_once __DIR__ . '/../Controllers/AuthController.php';
 require_once __DIR__ . '/../Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/../Middleware/RoleMiddleware.php';
 require_once __DIR__ . '/../Models/UserModel.php';
 
-// Untuk kelas middleware, disarankan menggunakan fully qualified class names jika tidak di-namespace
-// Contoh: $authMiddleware = new AuthMiddleware();
-// Namun, jika Anda menggunakan Slim 4 dan telah mendaftarkannya di Container,
-// Anda bisa menggunakan nama kelas. Karena Anda menggunakan require_once, kita buat instance.
-
-// Contoh inisialisasi koneksi DB (dari Config/Database.php)
 global $db; 
 
 // -----------------------------------------------------------
@@ -75,18 +71,39 @@ $app->group('', function (RouteCollectorProxy $group) use ($db) {
 
     // Rute Protected lainnya (Trips, Bookings, Reviews)
     // ... (rute 2.2, 2.3, 2.4 Anda sebelumnya)
+    $group->post('/booking', function ($request, $response) use ($db) { // Hapus $args
+        return (new BookingController($db))->createBooking($request, $response);
+    })->add(new RoleMiddleware(['customer', 'admin'])); // Tambahkan admin (opsional)
+
+    $group->get('/booking', function ($request, $response, $args) use ($db) {
+        return (new BookingController($db))->getUserBookings($request, $response, $args);
+    })->add(new RoleMiddleware(['customer']));
     
 })->add($authMiddlewareInstance); // <-- Terapkan AuthMiddleware di sini
 
 // -----------------------------------------------------------
 // 3. PUBLIC ENDPOINTS (Tanpa Autentikasi)
 // -----------------------------------------------------------
-$app->get('/trips', function ($request, $response) use ($db) {
-    // return (new TripController($db))->getAll($request, $response);
+// Routes untuk Trips
+$app->get('/trips', function($request, $response) use ($db) {
+    $controller = new TripController($db);
+    return $controller->getTrips($request, $response);
 });
 
-$app->get('/trips/{id}', function ($request, $response) use ($db) {
-    // return (new TripController($db))->getById($request, $response);
+// 🔎 Harus sebelum /trips/{id}
+$app->get('/trips/search', function ($request, $response) use ($db) {
+    $controller = new TripController($db);
+    return $controller->searchTripsByLocation($request, $response);
+});
+
+$app->get('/trips/search-gathering-point', function ($request, $response) use ($db) {
+    $controller = new TripController($db);
+    return $controller->searchTripsByGatheringPoint($request, $response);
+});
+
+$app->get('/trips/{id}', function ($request, $response, $args) use ($db) {
+    $controller = new TripController($db);
+    return $controller->getTripDetail($request, $response, $args);
 });
 
 $app->get('/reviews/trip/{id}', function ($request, $response) use ($db) {

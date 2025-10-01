@@ -4,38 +4,107 @@
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\Factory\AppFactory;
+use Slim\Exception\HttpNotFoundException;
+use Slim\Exception\HttpMethodNotAllowedException;
 
-// 1. Memuat Composer Autoloader
-// Ini memungkinkan kita menggunakan kelas dari vendor (seperti Slim dan JWT)
-// serta kelas dari folder Models, Controllers, dan Middleware.
 require __DIR__ . '/vendor/autoload.php';
+// Pastikan path ke konfigurasi Database Anda benar
+require __DIR__ . '/Config/Database.php'; 
 
-// 2. Memuat Konfigurasi Database
-// Ini membuat koneksi PDO instance ($db) yang akan digunakan oleh Controllers.
-require __DIR__ . '/Config/Database.php';
-
-// 3. Import Kelas Middleware dan Controller (jika tidak menggunakan namespace)
-// Jika Anda menggunakan namespace, baris ini mungkin tidak diperlukan.
-// require __DIR__ . '/Middleware/AuthMiddleware.php';
-// require __DIR__ . '/Middleware/RoleMiddleware.php';
-// require __DIR__ . '/Controllers/AuthController.php';
-// require __DIR__ . '/Controllers/TripController.php';
-// ... dll.
-
-// 4. Inisialisasi Slim App
 $app = AppFactory::create();
 
-// 5. Tambahkan Middleware untuk Routing
-// Harus ada sebelum Route Middleware
+// URUTAN MIDDLEWARE SANGAT PENTING!
 $app->addRoutingMiddleware();
+$app->addBodyParsingMiddleware();
 
-// 6. Tambahkan Error Middleware
-// Atur agar error ditampilkan (hanya untuk development!)
-$errorMiddleware = $app->addErrorMiddleware(true, true, true); 
+// Aktifkan Error Middleware: (displayErrorDetails, logErrors, logErrorDetails)
+// Set ketiganya ke 'true' selama pengembangan (development)
+$errorMiddleware = $app->addErrorMiddleware(true, true, true);
 
-// 7. Load Routes
-// Ini akan memuat semua definisi endpoint yang ada di Routes/api.php
+// ----------------------------------------------------
+// ## CUSTOM ERROR HANDLERS (JSON Output)
+// ----------------------------------------------------
+
+/**
+ * Handler Khusus untuk Not Found (404)
+ * Menangkap HttpNotFoundException.
+ */
+$errorMiddleware->setErrorHandler(HttpNotFoundException::class, function (
+    Request $request,
+    Throwable $exception,
+    bool $displayErrorDetails,
+    bool $logErrors,
+    bool $logErrorDetails
+) use ($app) {
+    // 1. Buat respons 404
+    $response = $app->getResponseFactory()->createResponse(404);
+    
+    // 2. Definisikan payload JSON
+    $payload = [
+        "status" => "failed",
+        "success" => false,
+        "message" => "Endpoint tidak ditemukan. Periksa kembali URL Anda."
+    ];
+    
+    // 3. Tulis JSON ke body respons
+    $response->getBody()->write(json_encode($payload, JSON_UNESCAPED_UNICODE));
+    
+    // 4. KUNCI: Set Content-Type menjadi application/json
+    return $response->withHeader("Content-Type", "application/json"); 
+});
+
+/**
+ * Handler Khusus untuk Method Not Allowed (405)
+ * Menangkap HttpMethodNotAllowedException.
+ */
+$errorMiddleware->setErrorHandler(HttpMethodNotAllowedException::class, function (
+    Request $request,
+    Throwable $exception,
+    bool $displayErrorDetails,
+    bool $logErrors,
+    bool $logErrorDetails
+) use ($app) {
+    $response = $app->getResponseFactory()->createResponse(405);
+    $payload = [
+        "status" => "failed",
+        "success" => false,
+        "message" => "Metode HTTP tidak diperbolehkan untuk endpoint ini."
+    ];
+    $response->getBody()->write(json_encode($payload, JSON_UNESCAPED_UNICODE));
+    return $response->withHeader("Content-Type", "application/json");
+});
+
+/**
+ * Default Handler (500) untuk semua Exception lain.
+ * Penting agar semua error yang tidak tertangkap di atas juga keluar JSON.
+ */
+$errorMiddleware->setDefaultErrorHandler(function (
+    Request $request,
+    Throwable $exception,
+    bool $displayErrorDetails,
+    bool $logErrors,
+    bool $logErrorDetails
+) use ($app) {
+    $response = $app->getResponseFactory()->createResponse(500);
+
+    // Tentukan pesan error (detail hanya ditampilkan jika $displayErrorDetails true)
+    $errorMessage = $displayErrorDetails ? $exception->getMessage() : "Terjadi kesalahan pada server.";
+    
+    $payload = [
+        "status" => "error", // Diubah menjadi 'error' agar berbeda dari 4xx
+        "success" => false,
+        "message" => $errorMessage
+    ];
+
+    $response->getBody()->write(json_encode($payload, JSON_UNESCAPED_UNICODE));
+
+    // KUNCI: Set Content-Type menjadi application/json
+    return $response->withHeader("Content-Type", "application/json");
+});
+
+// ----------------------------------------------------
+
+// Pastikan file ini berisi definisi route Anda
 require __DIR__ . '/Routes/api.php';
 
-// 8. Jalankan Aplikasi
 $app->run();

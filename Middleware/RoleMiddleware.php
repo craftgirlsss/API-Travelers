@@ -29,6 +29,7 @@ class RoleMiddleware {
         }
 
         $userRole = $jwtData['role'];
+        error_log("RoleMiddleware: jwt_data = " . print_r($request->getAttribute('jwt_data'), true));
 
         // 2. Cek apakah role pengguna termasuk dalam allowedRoles
         if (!in_array($userRole, $this->allowedRoles)) {

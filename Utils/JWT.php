@@ -33,6 +33,9 @@ class JWTUtility {
             'role' => $role // Data peran user
         ];
 
+        error_log("SECRET KEY LENGTH: " . strlen(self::$secret_key));
+        error_log("SECRET HEX: " . bin2hex(self::$secret_key));
+
         try {
             // Encode payload menjadi token JWT
             return JWT::encode($payload, self::$secret_key, self::$algorithm);
@@ -49,6 +52,8 @@ class JWTUtility {
      * @throws \Exception Jika token tidak valid atau kadaluarsa.
      */
     public static function decodeToken(string $token): object {
+        error_log("SECRET KEY LENGTH: " . strlen(self::$secret_key));
+        error_log("SECRET HEX: " . bin2hex(self::$secret_key));
         try {
             // Dekode token dan verifikasi signature dan klaim (iat, exp)
             $decoded = JWT::decode($token, new Key(self::$secret_key, self::$algorithm));
