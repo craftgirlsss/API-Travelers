@@ -7,14 +7,12 @@ use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Message\ResponseInterface as Response;
 
 class BookingController {
-    // [PERBAIKAN 1]: Definisikan dan simpan instance PDO untuk transaksi
     private PDO $db; 
-    
     private BookingModel $bookingModel;
     private TripModel $tripModel; 
 
     public function __construct(PDO $db) {
-        $this->db = $db; // <-- Inisialisasi PDO
+        $this->db = $db; 
         $this->bookingModel = new BookingModel($db);
         $this->tripModel = new TripModel($db);
     }
@@ -57,27 +55,25 @@ class BookingController {
                 throw new \Exception('Unauthorized: user not found in token payload', 401);
             }
 
-            // [PERBAIKAN 2]: Gunakan helper untuk membaca JSON/Form Data
             $parsedBody = $this->parseJsonInput($request); 
             
-            // Casting ke int harus menggunakan nilai dari $parsedBody
             $tripId = (int)($parsedBody['trip_id'] ?? 0);
-            $noOfPeople = (int)($parsedBody['num_of_people'] ?? 0); // Default ke 0, bukan 1, agar validasi di bawah menangkapnya
+            $noOfPeople = (int)($parsedBody['num_of_people'] ?? 0); 
 
             // --- VALIDASI INPUT DASAR ---
             if ($tripId <= 0 || $noOfPeople <= 0) {
+                // ... (ini adalah error yang muncul jika parsing body gagal)
                 throw new \Exception('Trip ID and number of people must be positive integers.', 400);
             }
-
             // --- 1. AMBIL DETAIL TRIP (Untuk Harga dan Kapasitas) ---
             $trip = $this->tripModel->findTripById($tripId);
-            if (!$trip || $trip['status'] !== 'available') {
+            if (!$trip || $trip['status'] !== 'published') {
                 throw new \Exception('Trip not found or not available for booking.', 404);
             }
 
             // --- 2. VALIDASI KAPASITAS & KONFLIK ---
-            $currentBooked = $trip['booked_participants'];
-            $maxCapacity = $trip['max_participants'];
+            $currentBooked = (int)$trip['booked_participants']; // Pastikan casting ke integer
+            $maxCapacity = (int)$trip['max_participants'];
             $newBooked = $currentBooked + $noOfPeople;
             
             if ($newBooked > $maxCapacity) {
@@ -85,7 +81,7 @@ class BookingController {
             }
 
             // --- 3. PERHITUNGAN HARGA ---
-            $pricePerPerson = $trip['price'] - $trip['discount_price'];
+            $pricePerPerson = (float)$trip['price'] - (float)$trip['discount_price'];
             $totalPrice = $pricePerPerson * $noOfPeople;
             
             if ($totalPrice < 0) {
@@ -125,6 +121,94 @@ class BookingController {
             if (str_contains($e->getMessage(), 'Unauthorized')) { $statusCode = 401; }
             
             error_log("APP ERROR in BookingController::create => " . $e->getMessage());
+            
+            $response->getBody()->write(json_encode([
+                'status' => 'error',
+                'success' => false,
+                'message' => $e->getMessage()
+            ]));
+            return $response->withHeader('Content-Type', 'application/json')->withStatus($statusCode);
+        }
+    }
+
+    /**
+     * Endpoint: PUT /booking/cancel/{id}
+     * Membatalkan pesanan dan mengembalikan slot ke trip.
+     */
+    public function cancelBooking(Request $request, Response $response, array $args): Response {
+        $bookingId = (int)($args['id'] ?? 0);
+        
+        if ($bookingId <= 0) {
+            $response->getBody()->write(json_encode(['status' => 'error', 'message' => 'Valid Booking ID is required.']));
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        }
+        
+        $this->db->beginTransaction(); // Mulai Transaksi
+
+        try {
+            $jwtData = $request->getAttribute('jwt_data');
+            $authenticatedUserId = (int)($jwtData['id'] ?? 0);
+
+            // --- 1. AMBIL DETAIL BOOKING ---
+            $booking = $this->bookingModel->getBookingDetailsForCancellation($bookingId);
+
+            if (!$booking) {
+                throw new \Exception('Booking not found.', 404);
+            }
+            
+            // --- 2. OTORISASI ---
+            // Hanya user yang membuat booking yang boleh membatalkan
+            if ($booking['user_id'] !== $authenticatedUserId) {
+                throw new \Exception('Unauthorized access. You can only cancel your own bookings.', 403);
+            }
+
+            // --- 3. VALIDASI STATUS ---
+            // Hanya pesanan 'pending' atau 'confirmed' yang boleh dibatalkan
+            if ($booking['status'] === 'cancelled') {
+                throw new \Exception('Booking is already cancelled.', 409);
+            }
+            if ($booking['status'] === 'completed') {
+                throw new \Exception('Cannot cancel a completed trip.', 409);
+            }
+            
+            $tripId = (int)$booking['trip_id'];
+            $numToDecrease = (int)$booking['num_of_people'];
+
+            // --- 4. UPDATE STATUS BOOKING menjadi 'cancelled' ---
+            $updateBookingSuccess = $this->bookingModel->updateBookingStatus($bookingId, 'cancelled');
+            if (!$updateBookingSuccess) {
+                 throw new \Exception('Failed to update booking status.', 500);
+            }
+
+            // --- 5. KURANGI booked_participants DI TABEL TRIPS ---
+            $decreaseTripSuccess = $this->tripModel->decreaseBookedParticipants($tripId, $numToDecrease);
+            
+            // Walaupun ada pengecekan >= di SQL, cek ini penting untuk logika aplikasi
+            if (!$decreaseTripSuccess) {
+                 throw new \Exception('Failed to release trip capacity. The booked count might be inconsistent.', 500);
+            }
+
+            $this->db->commit(); // Commit Transaksi
+
+            $response->getBody()->write(json_encode([
+                'status' => 'success',
+                'success' => true,
+                'message' => "Booking ID {$bookingId} successfully cancelled. {$numToDecrease} slots have been released."
+            ]));
+            return $response->withHeader('Content-Type', 'application/json')->withStatus(200);
+
+        } catch (\Exception $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack(); 
+            }
+            
+            $statusCode = 500;
+            if ($e->getCode() > 0 && $e->getCode() < 600) { $statusCode = $e->getCode(); }
+            if (str_contains($e->getMessage(), 'Unauthorized')) { $statusCode = 403; }
+            if (str_contains($e->getMessage(), 'not found')) { $statusCode = 404; }
+            if (str_contains($e->getMessage(), 'already cancelled') || str_contains($e->getMessage(), 'completed trip')) { $statusCode = 409; }
+            
+            error_log("APP ERROR in BookingController::cancelBooking => " . $e->getMessage());
             
             $response->getBody()->write(json_encode([
                 'status' => 'error',

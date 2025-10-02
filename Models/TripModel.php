@@ -8,6 +8,69 @@ class TripModel {
         $this->db = $db;
     }
 
+    private string $tableName = 'trips';
+
+    public function findTripById(int $tripId): array|false {
+        $sql = "
+            SELECT 
+                id, price, discount_price, max_participants, booked_participants, status 
+            FROM {$this->tableName} 
+            WHERE id = :id AND approval_status = 'approved' AND is_deleted = 0
+            LIMIT 1
+        ";
+        
+        try {
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute([':id' => $tripId]);
+            return $stmt->fetch(PDO::FETCH_ASSOC);
+        } catch (\PDOException $e) {
+            error_log("SQL ERROR in TripModel::findTripById => " . $e->getMessage());
+            throw $e;
+        }
+    }
+    
+    // [FIX]: Mengupdate jumlah booked_participants
+    public function updateBookedParticipants(int $tripId, int $newBookedParticipants): bool {
+        $sql = "
+            UPDATE {$this->tableName} 
+            SET booked_participants = :booked, updated_at = NOW() 
+            WHERE id = :id
+        ";
+        
+        try {
+            error_log("TRIP UPDATE PARAMS: " . json_encode([':booked' => $newBookedParticipants, ':id' => $tripId]));
+            $stmt = $this->db->prepare($sql);
+            return $stmt->execute([
+                ':booked' => $newBookedParticipants,
+                ':id' => $tripId
+            ]);
+        } catch (\PDOException $e) {
+            error_log("SQL ERROR in TripModel::updateBookedParticipants => " . $e->getMessage());
+            throw $e;
+        }
+    }
+
+    public function decreaseBookedParticipants(int $tripId, int $numToDecrease): bool {
+        $sql = "
+            UPDATE {$this->tableName} 
+            SET booked_participants = booked_participants - :decrease_amount, 
+                updated_at = NOW() 
+            WHERE id = :id AND booked_participants >= :decrease_amount
+        ";
+        
+        try {
+            error_log("TRIP DECREASE PARAMS: " . json_encode([':decrease_amount' => $numToDecrease, ':id' => $tripId]));
+            $stmt = $this->db->prepare($sql);
+            return $stmt->execute([
+                ':decrease_amount' => $numToDecrease,
+                ':id' => $tripId
+            ]);
+        } catch (\PDOException $e) {
+            error_log("SQL ERROR in TripModel::decreaseBookedParticipants => " . $e->getMessage());
+            throw $e;
+        }
+    }
+
     public function getAllTrips(): array {
         $stmt = $this->db->prepare("
             SELECT 
@@ -141,18 +204,5 @@ class TripModel {
         $stmt->execute([':id' => $id]);
         $trip = $stmt->fetch(PDO::FETCH_ASSOC);
         return $trip ?: null;
-    }
-
-    // Mengupdate jumlah booked_participants (menggunakan transaksi dan LOCK)
-    private string $tableName = 'trips';
-    public function updateBookedParticipants(int $tripId, int $newBookedParticipants): bool {
-        $stmt = $this->db->prepare("
-            UPDATE {$this->tableName} 
-            SET booked_participants = :booked, updated_at = NOW() 
-            WHERE id = :id
-        ");
-        $stmt->bindParam(':booked', $newBookedParticipants);
-        $stmt->bindParam(':id', $tripId);
-        return $stmt->execute();
     }
 }

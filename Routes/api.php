@@ -57,7 +57,8 @@ $app->group('', function (RouteCollectorProxy $group) use ($db) {
     
     // PENTING: Gunakan ClientController langsung
     $clientController = new ClientController($db);
-    
+    $bookingController = new BookingController($db); // <-- Inisialisasi BookingController
+
     // 2.1. USERS (CRUD)
     $group->get('/users', function ($request, $response) use ($db) {
         // return (new UserController($db))->getAll($request, $response);
@@ -78,15 +79,20 @@ $app->group('', function (RouteCollectorProxy $group) use ($db) {
         return $clientController->updateClientProfile($request, $response, $args);
     })->add(new RoleMiddleware(['admin', 'customer'])); // Role yang sama dengan GET
 
-    // Rute Protected lainnya (Trips, Bookings, Reviews)
-    // ... (rute 2.2, 2.3, 2.4 Anda sebelumnya)
-    $group->post('/booking', function ($request, $response) use ($db) { // Hapus $args
-        return (new BookingController($db))->createBooking($request, $response);
+    // 2.6. BOOKINGS
+    $group->post('/booking', function ($request, $response) use ($db, $bookingController) { // Hapus $args
+        return $bookingController->createBooking($request, $response);
     })->add(new RoleMiddleware(['customer', 'admin'])); // Tambahkan admin (opsional)
 
-    $group->get('/booking', function ($request, $response, $args) use ($db) {
-        return (new BookingController($db))->getUserBookings($request, $response, $args);
+    $group->get('/booking', function ($request, $response, $args) use ($db, $bookingController) {
+        return $bookingController->getUserBookings($request, $response, $args);
     })->add(new RoleMiddleware(['customer']));
+    
+    // --- START OF NEW ROUTE ---
+    $group->put('/booking/cancel/{id}', function ($request, $response, $args) use ($bookingController) {
+        return $bookingController->cancelBooking($request, $response, $args);
+    })->add(new RoleMiddleware(['customer', 'admin']));
+    // --- END OF NEW ROUTE ---
     
 })->add($authMiddlewareInstance); // <-- Terapkan AuthMiddleware di sini
 
