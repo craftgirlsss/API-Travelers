@@ -191,4 +191,64 @@ class ClientController {
         $response->getBody()->write(json_encode($output));
         return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
     }
+
+    public function deactivateClientAccount(Request $request, Response $response, array $args): Response {
+        $requestedUserUuid = $args['uuid'] ?? null;
+        
+        // --- 1. OTORISASI ---
+        $jwtData = $request->getAttribute('jwt_data'); 
+        $authenticatedUserUuid = $jwtData['uuid'] ?? null;
+        $authenticatedUserRole = $jwtData['role'] ?? 'guest';
+
+        $isAccessAllowed = (
+            $authenticatedUserRole === 'admin' || 
+            $authenticatedUserUuid === $requestedUserUuid
+        );
+
+        if (!$isAccessAllowed) {
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'message' => 'Unauthorized access. You can only deactivate your own account.'
+            ]));
+            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+        }
+
+        // --- 2. CEK USER TARGET ---
+        $userToDeactivate = $this->userModel->findByUuid($requestedUserUuid);
+        if (!$userToDeactivate || $userToDeactivate['role'] !== 'customer') {
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'message' => 'Invalid client user not found or not a client profile.'
+            ]));
+            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+        }
+        $targetUserId = (int)$userToDeactivate['id'];
+        
+        // Cek apakah akun sudah nonaktif
+        if ($userToDeactivate['status'] === 'deactivated') {
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'message' => 'Account is already deactivated.'
+            ]));
+            return $response->withStatus(409)->withHeader('Content-Type', 'application/json');
+        }
+
+
+        // --- 3. NONAKTIFKAN AKUN ---
+        $deactivateSuccess = $this->userModel->deactivateAccount($targetUserId);
+
+        if ($deactivateSuccess) {
+            $response->getBody()->write(json_encode([
+                'status' => 'success', 
+                'message' => 'Your account has been successfully deactivated. You will not be able to log in until it is reactivated.'
+            ]));
+            return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
+        }
+
+        $response->getBody()->write(json_encode([
+            'status' => 'error', 
+            'message' => 'Failed to deactivate account due to a server error.'
+        ]));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
 }

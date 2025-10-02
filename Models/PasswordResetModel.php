@@ -13,8 +13,8 @@ class PasswordResetModel {
      * Membuat record OTP baru di database.
      */
     public function createOTP(int $userId, string $otpCode, string $expirationTime): bool {
-        // Hapus semua OTP lama yang mungkin masih ada untuk user ini (opsional)
-        $this->deleteOTPByUserId($userId);
+        // [PERBAIKAN NAMA CALL]: Menggunakan nama method yang lebih generik
+        $this->deleteRecordByUserId($userId);
 
         $stmt = $this->db->prepare("
             INSERT INTO {$this->tableName} (user_id, otp_code, expires_at, created_at)
@@ -24,7 +24,6 @@ class PasswordResetModel {
         $stmt->bindParam(':user_id', $userId);
         $stmt->bindParam(':otp_code', $otpCode);
         $stmt->bindParam(':expires_at', $expirationTime);
-        // Kolom created_at diisi langsung dengan NOW() di query, tidak perlu bindParam.
 
         return $stmt->execute();
     }
@@ -57,16 +56,18 @@ class PasswordResetModel {
         
         if ($otp) {
             // OTP valid, hapus untuk mencegah penggunaan ulang
-            $this->deleteOTPByUserId($userId);
+            // [PERBAIKAN NAMA CALL]: Menggunakan nama method yang lebih generik
+            $this->deleteRecordByUserId($userId);
             return true;
         }
         return false;
     }
 
     /**
-     * Menghapus semua OTP untuk user tertentu.
+     * Menghapus semua record password reset (baik OTP atau token) untuk user tertentu.
+     * [PERUBAHAN NAMA METHOD]
      */
-    public function deleteOTPByUserId(int $userId): bool {
+    public function deleteRecordByUserId(int $userId): bool {
         $stmt = $this->db->prepare("DELETE FROM {$this->tableName} WHERE user_id = :user_id");
         $stmt->bindParam(':user_id', $userId);
         return $stmt->execute();
@@ -74,7 +75,8 @@ class PasswordResetModel {
 
     public function createResetToken(int $userId, string $resetToken, string $expirationTime): bool {
         // Hapus entri lama
-        $this->deleteOTPByUserId($userId); 
+        // [PERBAIKAN NAMA CALL]: Menggunakan nama method yang lebih generik
+        $this->deleteRecordByUserId($userId); 
 
         $stmt = $this->db->prepare("
             INSERT INTO {$this->tableName} (user_id, reset_token, expires_at, created_at)
@@ -107,7 +109,8 @@ class PasswordResetModel {
 
         if ($record) {
             // Token valid, hapus record
-            $this->deleteOTPByUserId($userId);
+            // [PERBAIKAN NAMA CALL]: Menggunakan nama method yang lebih generik
+            $this->deleteRecordByUserId($userId);
             return true;
         }
         return false;

@@ -32,6 +32,15 @@ $app->post('/forgot-password', function ($request, $response) use ($db) {
 $app->post('/verify-otp', function ($request, $response) use ($db) {
     return (new AuthController($db))->verifyOTP($request, $response);
 });
+
+$app->delete('/client/profile/{uuid}', ClientController::class . ':deactivateClientAccount')
+    ->add(AuthMiddleware::class);
+
+// --- RUTE BARU: RESEND OTP ---
+$app->post('/resend-otp', function ($request, $response) use ($db) {
+    return (new AuthController($db))->resendOTP($request, $response);
+});
+
 $app->post('/reset-password', function ($request, $response) use ($db) {
     return (new AuthController($db))->resetPassword($request, $response);
 });

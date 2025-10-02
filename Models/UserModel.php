@@ -161,4 +161,28 @@ class UserModel {
         
         return $stmt->execute();
     }
+
+    /**
+     * Menonaktifkan akun user dengan mengubah kolom status menjadi 'deactivated'.
+     * @param int $userId ID internal user.
+     * @return bool True jika update sukses.
+     */
+    public function deactivateAccount(int $userId): bool {
+        $sql = "UPDATE {$this->tableName} SET status = 'deactivated', updated_at = NOW() WHERE id = :id";
+        
+        $stmt = $this->db->prepare($sql);
+        return $stmt->execute([':id' => $userId]);
+    }
+
+    /**
+     * Mengaktifkan kembali akun user dengan mengubah kolom status menjadi 'active'.
+     * @param int $userId ID internal user.
+     * @return bool True jika update sukses.
+     */
+    public function reactivateAccount(int $userId): bool {
+        $sql = "UPDATE {$this->tableName} SET status = 'active', updated_at = NOW() WHERE id = :id";
+        
+        $stmt = $this->db->prepare($sql);
+        return $stmt->execute([':id' => $userId]);
+    }
 }

@@ -17,7 +17,7 @@ class MailerUtility {
 
     /**
      * Mengirim email dengan PHPMailer.
-     * * @param string $toEmail Email penerima.
+     * @param string $toEmail Email penerima.
      * @param string $subject Subjek email.
      * @param string $body Konten HTML email.
      * @return bool True jika sukses, False jika gagal.
@@ -68,6 +68,7 @@ class MailerUtility {
      * Helper khusus untuk mengirim kode OTP.
      */
     public static function sendOTPEmail(string $toEmail, string $otpCode): bool {
+        // CATATAN: Waktu expiry di sini (5 menit) harus sesuai dengan logika 60 detik di AuthController.
         $subject = "Kode OTP Reset Password Anda";
         $body = "
             <html>
@@ -78,8 +79,8 @@ class MailerUtility {
                 <div style='background-color:#f0f0f0; padding: 20px; border-radius: 5px; text-align: center;'>
                     <h1 style='color: #333;'>{$otpCode}</h1>
                 </div>
-                <p>Kode ini akan kadaluarsa dalam 5 menit. Jangan bagikan kode ini kepada siapa pun.</p>
-                <p>Hormat kami,<br>Tim OpenTripku</p>
+                <p>Kode ini akan kadaluarsa dalam 60 detik. Jangan bagikan kode ini kepada siapa pun.</p>
+                <p>Hormat kami,<br>Tim Travelers</p>
             </body>
             </html>
         ";
@@ -98,6 +99,27 @@ class MailerUtility {
                 <p>Jika Anda tidak merasa mendaftar di Travelers, harap segera balas email ini atau hubungi tim dukungan kami di <a href='mailto:info@karyadeveloperindonesia.com'>info@karyadeveloperindonesia.com</a>.</p>
                 <p>Selamat Berpetualang!</p>
                 <p>Hormat kami,<br>Tim Travelers</p>
+            </body>
+            </html>
+        ";
+        return self::sendEmail($toEmail, $subject, $body);
+    }
+    
+    /**
+     * Helper BARU untuk mengirim email pemberitahuan perubahan password.
+     */
+    public static function sendPasswordChangeNotification(string $toEmail, string $userName): bool {
+        $subject = "Penting: Password Akun Anda Berhasil Diubah";
+        $body = "
+            <html>
+            <body>
+                <h2>Pemberitahuan Keamanan</h2>
+                <p>Halo, <strong>{$userName}</strong>.</p>
+                <p>Kami ingin memberitahu bahwa **password** untuk akun Travelers Anda ({$toEmail}) telah berhasil diubah pada **" . date('Y-m-d H:i:s') . " WIB**.</p>
+                <p>Jika Anda melakukan perubahan ini, Anda dapat mengabaikan email ini.</p>
+                <p>Namun, **jika Anda TIDAK melakukan perubahan ini**, harap segera hubungi tim dukungan kami di <a href='mailto:info@karyadeveloperindonesia.com'>info@karyadeveloperindonesia.com</a> untuk mengamankan akun Anda.</p>
+                <p>Terima kasih atas perhatiannya.</p>
+                <p>Hormat kami,<br>Tim Keamanan Travelers</p>
             </body>
             </html>
         ";

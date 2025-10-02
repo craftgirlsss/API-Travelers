@@ -154,7 +154,6 @@ class AuthController {
             $userUuid = $user['uuid'] ?? '';
 
             // --- KRITIS: PEMBUATAN TOKEN JWT DENGAN UUID ---
-            // ASUMSI: JWT.php memiliki kelas/fungsi statis JWTUtility::generateToken($id, $role, $uuid)
             $token = JWTUtility::generateToken((int)$user['id'], $user['role'], $userUuid);  
             // ------------------------------------------
             
@@ -205,6 +204,10 @@ class AuthController {
         }
     }
 
+    /**
+     * Endpoint: POST /forgot-password
+     * Mengirimkan OTP baru (berlaku 60 detik).
+     */
     public function forgotPassword(Request $request, Response $response): Response {
         $data = $this->parseJsonInput($request);
 
@@ -222,9 +225,11 @@ class AuthController {
         if ($user) {
             // 1. Generate OTP (6 digit angka)
             $otpCode = rand(100000, 999999); 
-            $expiration = date('Y-m-d H:i:s', time() + (5 * 60)); // 5 menit kadaluarsa
+            // [PERBAIKAN OTP EXPIRY]: Hanya berlaku 60 detik (dari 5 menit)
+            $expiration = date('Y-m-d H:i:s', time() + 60); 
 
             // 2. Simpan OTP ke database
+            // diasumsikan createOTP akan menimpa (upsert) OTP yang sudah ada jika user_id sama
             $this->resetModel->createOTP($user['id'], $otpCode, $expiration); 
 
             // 3. Panggil fungsi pengiriman email
@@ -236,11 +241,15 @@ class AuthController {
         
         $response->getBody()->write(json_encode([
             'status' => 'success', 
-            'message' => 'If the email exists, an OTP code has been sent.'
+            'message' => 'If the email exists, an OTP code has been sent. It is valid for 60 seconds.'
         ]));
         return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
     }
 
+    /**
+     * Endpoint: POST /verify-otp
+     * Memverifikasi OTP dan mengecek masa berlaku (60 detik).
+     */
     public function verifyOTP(Request $request, Response $response): Response {
         $data = $this->parseJsonInput($request);
 
@@ -261,16 +270,23 @@ class AuthController {
             return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
         }
 
+        // [PERUBAHAN]: Model harus menangani pengecekan expiry 
+        // verifyAndDeleteOTP harus:
+        // 1. Ambil data reset
+        // 2. Cek apakah expires_at sudah terlewati (jika terlewati, gagal)
+        // 3. Cek apakah otpCode cocok
+        // 4. Jika valid, hapus data reset
         $isVerified = $this->resetModel->verifyAndDeleteOTP($user['id'], $otpCode); 
 
         if (!$isVerified) {
+            // Pesan ini mencakup "Expired"
             $response->getBody()->write(json_encode(['status' => 'error', 'message' => 'Invalid or expired OTP code.']));
             return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
         }
 
         // JIKA SUKSES, GENERATE RESET TOKEN SEMENTARA
         $resetToken = bin2hex(random_bytes(16)); // Token acak 32 karakter
-        $tokenExpiration = date('Y-m-d H:i:s', time() + (10 * 60)); // Berlaku 10 menit
+        $tokenExpiration = date('Y-m-d H:i:s', time() + (10 * 60)); // Berlaku 10 menit (token reset)
         
         // Simpan Reset Token (menggantikan OTP)
         $this->resetModel->createResetToken($user['id'], $resetToken, $tokenExpiration); 
@@ -285,6 +301,63 @@ class AuthController {
         ]));
         return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
     }
+    
+    /**
+     * Endpoint: POST /resend-otp
+     * Mengirim ulang OTP jika yang lama hangus atau belum sampai.
+     */
+    public function resendOTP(Request $request, Response $response): Response {
+        try {
+            $data = $this->parseJsonInput($request);
+            $email = $data['email'] ?? null;
+
+            if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                throw new \Exception('Valid email address is required.', 400);
+            }
+
+            $user = $this->userModel->findByEmail($email);
+            if (!$user) {
+                // Keamanan: Beri pesan generik
+                $response->getBody()->write(json_encode(['status' => 'success', 'message' => 'OTP request processed. Check your inbox/spam folder.']));
+                return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
+            }
+
+            // --- Logika RESEND OTP ---
+            $otpCode = rand(100000, 999999); // Buat OTP baru
+            // Set 60 detik expiry
+            $expiration = date('Y-m-d H:i:s', time() + 60); 
+
+            // Simpan atau update OTP baru di password_resets
+            $this->resetModel->createOTP(
+                $user['id'], 
+                $otpCode, 
+                $expiration
+            );
+
+            // Panggil fungsi pengiriman email
+            $isSent = MailerUtility::sendOTPEmail($email, $otpCode);
+            if (!$isSent) {
+                error_log("Failed to send RESEND OTP email to: " . $email);
+            }
+
+            $response->getBody()->write(json_encode([
+                'status' => 'success', 
+                'success' => true,
+                'message' => 'New OTP has been sent successfully. It is valid for 60 seconds.'
+            ]));
+            return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
+
+        } catch (\Exception $e) {
+            $statusCode = $e->getCode() ?: 500;
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'success' => false,
+                'message' => $e->getMessage()
+            ]));
+            return $response->withStatus($statusCode)->withHeader('Content-Type', 'application/json');
+        }
+    }
+
 
     public function resetPassword(Request $request, Response $response): Response {
         $data = $this->parseJsonInput($request);
@@ -324,10 +397,20 @@ class AuthController {
             return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
         }
 
-        // --- 5. Kirim Response Sukses
+        // --- 5. KIRIM NOTIFIKASI PERUBAHAN PASSWORD (BARU) ---
+        try {
+            // Kita punya $user['email'] dan $user['name'] dari findByEmail
+            MailerUtility::sendPasswordChangeNotification($user['email'], $user['name']);
+        } catch (\Exception $e) {
+            error_log("Failed to send password change notification to {$user['email']}: " . $e->getMessage());
+            // Lanjutkan eksekusi, karena pengiriman email adalah secondary process
+        }
+        // -----------------------------------------------------
+
+        // --- 6. Kirim Response Sukses
         $response->getBody()->write(json_encode([
             'status' => 'success', 
-            'message' => 'Your password has been reset successfully.'
+            'message' => 'Your password has been reset successfully. A confirmation email has been sent.' // Pesan respons diupdate
         ]));
         return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
     }
