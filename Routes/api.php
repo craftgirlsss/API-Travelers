@@ -11,7 +11,9 @@ require_once __DIR__ . '/../Controllers/TripController.php';
 require_once __DIR__ . '/../Controllers/AuthController.php';
 require_once __DIR__ . '/../Middleware/AuthMiddleware.php';
 require_once __DIR__ . '/../Middleware/RoleMiddleware.php';
+require_once __DIR__ . '/../Controllers/ComplaintController.php';
 require_once __DIR__ . '/../Models/UserModel.php';
+require_once __DIR__ . '/../Controllers/ReviewController.php'; 
 
 global $db; 
 
@@ -33,8 +35,7 @@ $app->post('/verify-otp', function ($request, $response) use ($db) {
     return (new AuthController($db))->verifyOTP($request, $response);
 });
 
-$app->delete('/client/profile/{uuid}', ClientController::class . ':deactivateClientAccount')
-    ->add(AuthMiddleware::class);
+// HAPUS RUTE DELETE YANG DI LUAR GROUP DI SINI, pindahkan ke Bawah (Bagian 2)
 
 // --- RUTE BARU: RESEND OTP ---
 $app->post('/resend-otp', function ($request, $response) use ($db) {
@@ -55,9 +56,11 @@ $authMiddlewareInstance = new AuthMiddleware();
 
 $app->group('', function (RouteCollectorProxy $group) use ($db) {
     
-    // PENTING: Gunakan ClientController langsung
+    // Inisialisasi Controllers
     $clientController = new ClientController($db);
-    $bookingController = new BookingController($db); // <-- Inisialisasi BookingController
+    $bookingController = new BookingController($db);
+    $complaintController = new ComplaintController($db);
+    $reviewController = new ReviewController($db);
 
     // 2.1. USERS (CRUD)
     $group->get('/users', function ($request, $response) use ($db) {
@@ -68,31 +71,53 @@ $app->group('', function (RouteCollectorProxy $group) use ($db) {
         // return (new UserController($db))->getByUuid($request, $response);
     });
 
-    // 2.5. CLIENT PROFILE
-    // PENTING: Ganti {id} menjadi {uuid} untuk keamanan
-    $group->get('/client/profile/{uuid}', function ($request, $response, $args) use ($clientController) { 
-        return $clientController->getClientProfile($request, $response, $args);
-    })->add(new RoleMiddleware(['admin', 'customer'])); // Role check untuk membatasi akses
-
-    // --- BARU: ENDPOINT EDIT DATA DIRI ---
-    $group->put('/client/profile/{uuid}', function ($request, $response, $args) use ($clientController) {
-        return $clientController->updateClientProfile($request, $response, $args);
-    })->add(new RoleMiddleware(['admin', 'customer'])); // Role yang sama dengan GET
-
-    // 2.6. BOOKINGS
-    $group->post('/booking', function ($request, $response) use ($db, $bookingController) { // Hapus $args
-        return $bookingController->createBooking($request, $response);
-    })->add(new RoleMiddleware(['customer', 'admin'])); // Tambahkan admin (opsional)
-
-    $group->get('/booking', function ($request, $response, $args) use ($db, $bookingController) {
-        return $bookingController->getUserBookings($request, $response, $args);
-    })->add(new RoleMiddleware(['customer']));
+    // 2.5. CLIENT PROFILE (RUTE PROFIL DIRI SENDIRI)
     
-    // --- START OF NEW ROUTE ---
+    // GET /client/profile (Melihat profile sendiri - TIDAK PAKAI UUID DI URL)
+    $group->get('/client/profile', function ($request, $response) use ($clientController) { 
+        return $clientController->getAuthenticatedClientProfile($request, $response);
+    })->add(new RoleMiddleware(['admin', 'customer']));
+
+    // PUT /client/profile (Edit profile sendiri - TIDAK PAKAI UUID DI URL)
+    $group->put('/client/profile', function ($request, $response) use ($clientController) {
+        return $clientController->updateAuthenticatedClientProfile($request, $response);
+    })->add(new RoleMiddleware(['admin', 'customer']));
+
+    // DELETE /client/account (Nonaktifkan akun sendiri - TIDAK PAKAI UUID DI URL)
+    $group->delete('/client/account', function ($request, $response) use ($clientController) { 
+        // Menggunakan method yang sudah direvisi
+        return $clientController->deactivateAuthenticatedClientAccount($request, $response);
+    })->add(new RoleMiddleware(['admin', 'customer'])); 
+
+    // 2.6. COMPLAINTS & REVIEWS
+    $group->post('/complaints', function ($request, $response) use ($complaintController) {
+        return $complaintController->submitComplaint($request, $response);
+    })->add(new RoleMiddleware(['customer']));
+
+    $group->post('/reviews', function ($request, $response) use ($reviewController) {
+        return $reviewController->submitReview($request, $response);
+    })->add(new RoleMiddleware(['customer']));
+
+    // 2.7. BOOKINGS
+    $group->post('/booking', function ($request, $response) use ($bookingController) {
+        return $bookingController->createBooking($request, $response);
+    })->add(new RoleMiddleware(['customer', 'admin']));
+
+    $group->get('/booking', function ($request, $response) use ($bookingController) {
+        return $bookingController->getUserBookings($request, $response);
+    })->add(new RoleMiddleware(['customer']));
+
+    $group->get('/booking/{id}', function ($request, $response, $args) use ($bookingController) {
+        return $bookingController->getBookingDetail($request, $response, $args);
+    })->add(new RoleMiddleware(['customer', 'admin']));
+    
+    $group->get('/booking/{id}/payment-details', function ($request, $response, $args) use ($bookingController) {
+        return $bookingController->getPaymentDetails($request, $response, $args);
+    })->add(new RoleMiddleware(['customer', 'admin']));
+
     $group->put('/booking/cancel/{id}', function ($request, $response, $args) use ($bookingController) {
         return $bookingController->cancelBooking($request, $response, $args);
     })->add(new RoleMiddleware(['customer', 'admin']));
-    // --- END OF NEW ROUTE ---
     
 })->add($authMiddlewareInstance); // <-- Terapkan AuthMiddleware di sini
 
@@ -116,11 +141,12 @@ $app->get('/trips/search-gathering-point', function ($request, $response) use ($
     return $controller->searchTripsByGatheringPoint($request, $response);
 });
 
-$app->get('/trips/{id}', function ($request, $response, $args) use ($db) {
+$app->get('/trips/{uuid}', function ($request, $response, $args) use ($db) {
     $controller = new TripController($db);
     return $controller->getTripDetail($request, $response, $args);
 });
 
-$app->get('/reviews/trip/{id}', function ($request, $response) use ($db) {
-    // return (new ReviewController($db))->getByTrip($request, $response);
+$app->get('/trips/{uuid}/reviews', function ($request, $response, $args) use ($db) {
+    $reviewController = new ReviewController($db);
+    return $reviewController->getReviewsByTrip($request, $response, $args);
 });

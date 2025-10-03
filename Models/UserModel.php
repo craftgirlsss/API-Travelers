@@ -1,79 +1,97 @@
 <?php
 // Models/UserModel.php
 
-// Asumsi: Anda telah menginstal dan menggunakan library seperti ramsey/uuid
-// use Ramsey\Uuid\Uuid; 
-
 class UserModel {
-    private $db;
-    private $tableName = 'users'; 
+    private PDO $db;
+    private string $tableName = 'users'; 
     
     public function __construct(PDO $db) {
         $this->db = $db;
     }
 
+    // =================================================================
+    // HELPER: IMPLEMENTASI UUID V4 (TANPA RAMSEY/UUID)
+    // =================================================================
     /**
-     * Helper untuk membuat UUID V4. 
-     * Ganti dengan implementasi library yang sebenarnya jika menggunakan Composer.
+     * Menggunakan fungsi bawaan PHP untuk membuat UUID V4 secara pseudo-random.
+     * Digunakan sebagai pengganti ramsey/uuid.
      */
     private function generateUuid(): string {
-        // Jika menggunakan Ramsey\Uuid: return Uuid::uuid4()->toString();
+        try {
+            $data = random_bytes(16);
+        } catch (\Exception $e) {
+            // Fallback jika random_bytes gagal (jarang terjadi)
+            $data = openssl_random_pseudo_bytes(16);
+        }
         
-        // Stub/Contoh sederhana (HINDARI INI DI PRODUKSI, gunakan library profesional)
-        return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-            mt_rand(0, 0xffff), mt_rand(0, 0xffff),
-            mt_rand(0, 0xffff),
-            mt_rand(0, 0x0fff) | 0x4000,
-            mt_rand(0, 0x3fff) | 0x8000,
-            mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
-        );
+        // Atur versi ke 0100 (UUID versi 4)
+        $data[6] = chr(ord($data[6]) & 0x0f | 0x40); 
+        // Atur clock_seq_hi_and_reserved ke 10 (RFC 4122)
+        $data[8] = chr(ord($data[8]) & 0x3f | 0x80); 
+
+        // Format sebagai string UUID standar: 8-4-4-4-12 karakter
+        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
     
-    // -----------------------------------------------------------------
-    // FINDERS
-    // -----------------------------------------------------------------
+    // =================================================================
+    // FINDERS (Login & Security)
+    // =================================================================
 
     public function findByEmail(string $email): array|false {
-        $stmt = $this->db->prepare("SELECT * FROM users WHERE email = :email");
+        // MENAMBAH login_attempts dan is_suspended untuk logika login
+        $stmt = $this->db->prepare("SELECT id, uuid, name, email, password, role, status, is_suspended, login_attempts FROM users WHERE email = :email");
         $stmt->bindParam(':email', $email);
         $stmt->execute();
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
 
+    /**
+     * Mengambil data user berdasarkan ID internal (dibutuhkan AuthController setelah create).
+     */
     public function findByUserId(int $userId): array|false {
-        $stmt = $this->db->prepare("SELECT * FROM users WHERE id = :id");
+        $stmt = $this->db->prepare("SELECT id, uuid, name, email, role FROM users WHERE id = :id");
         $stmt->bindParam(':id', $userId, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
 
-    /**
-     * Mencari user berdasarkan UUID (ID publik). Digunakan untuk /client/profile/{uuid}
-     */
-    public function findByUuid(string $uuid): array|false {
-        $stmt = $this->db->prepare("SELECT * FROM users WHERE uuid = :uuid");
-        $stmt->bindParam(':uuid', $uuid, PDO::PARAM_STR);
+    public function getUserProfileById(int $userId): array|false {
+        $sql = "
+            SELECT 
+                uuid, 
+                name, 
+                email, 
+                phone, 
+                profile_picture_path, 
+                created_at,
+                updated_at
+            FROM users 
+            WHERE id = :id
+        ";
+        $stmt = $this->db->prepare($sql);
+        $stmt->bindParam(':id', $userId, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
     
     
-    // -----------------------------------------------------------------
+    // =================================================================
     // CRUD
-    // -----------------------------------------------------------------
+    // =================================================================
 
     /**
      * Membuat record user baru di database, termasuk UUID.
+     * Nama diganti menjadi registerNewUser untuk menghindari bentrok dengan framework.
      */
-    public function create(string $email, string $hashedPassword, string $name, ?string $phone = null, string $role = 'customer'): int|false {
+    public function registerNewUser(string $email, string $hashedPassword, string $name, ?string $phone = null, string $role = 'customer'): int|false {
         
-        $uuid = $this->generateUuid(); // <--- GENERATE UUID BARU
+        $uuid = $this->generateUuid();
 
         $stmt = $this->db->prepare("
             INSERT INTO {$this->tableName} 
-                (name, email, password, phone, role, uuid, status, login_attempts, is_suspended, suspended_until)
+                (name, email, password, phone, role, uuid, status, login_attempts, is_suspended)
             VALUES 
-                (:name, :email, :pass, :phone, :role, :uuid, 'active', 0, 0, NULL)
+                (:name, :email, :pass, :phone, :role, :uuid, 'active', 0, 0)
         ");
         
         $stmt->bindParam(':name', $name);
@@ -81,21 +99,22 @@ class UserModel {
         $stmt->bindParam(':pass', $hashedPassword);
         $stmt->bindParam(':phone', $phone);
         $stmt->bindParam(':role', $role);
-        $stmt->bindParam(':uuid', $uuid); // <--- BIND UUID
+        $stmt->bindParam(':uuid', $uuid);
 
         try {
             if ($stmt->execute()) {
-                return $this->db->lastInsertId();
+                return (int)$this->db->lastInsertId();
             }
             return false;
         } catch (\PDOException $e) {
+            // Lempar Exception untuk ditangkap di Controller (misalnya Duplicate Entry)
             throw $e; 
         }
     }
 
     public function updatePassword(int $userId, string $hashedPassword): bool {
         $stmt = $this->db->prepare("
-            UPDATE users SET password = :password WHERE id = :user_id
+            UPDATE users SET password = :password, updated_at = NOW() WHERE id = :user_id
         ");
         
         $stmt->bindParam(':password', $hashedPassword);
@@ -103,51 +122,9 @@ class UserModel {
 
         return $stmt->execute();
     }
-
-    // -----------------------------------------------------------------
-    // SECURITY/LOGIN
-    // -----------------------------------------------------------------
-
-    /**
-     * Mengatur ulang (reset) jumlah login attempts menjadi 0.
-     */
-    public function resetLoginAttempts(int $userId): bool {
-        $stmt = $this->db->prepare("
-            UPDATE users SET login_attempts = 0 WHERE id = :user_id
-        ");
-        $stmt->bindParam(':user_id', $userId);
-        return $stmt->execute();
-    }
-
-    /**
-     * Menambahkan 1 ke jumlah login attempts.
-     */
-    public function incrementLoginAttempts(int $userId): bool {
-        $stmt = $this->db->prepare("
-            UPDATE users SET login_attempts = login_attempts + 1 WHERE id = :user_id
-        ");
-        $stmt->bindParam(':user_id', $userId);
-        return $stmt->execute();
-    }
-
-    /**
-     * Mensuspend akun user.
-     */
-    public function suspendAccount(int $userId): bool {
-        $stmt = $this->db->prepare("
-            UPDATE users SET 
-                is_suspended = 1, 
-                suspended_until = NULL 
-            WHERE id = :user_id
-        ");
-        $stmt->bindParam(':user_id', $userId);
-        return $stmt->execute();
-    }
-
-
-    /**
-     * Update data dasar user (nama, phone) berdasarkan user ID.
-     */
+    
+    // ... (Method CRUD lainnya seperti updateBasicData, deactivateAccount, reactivateAccount)
+    
     public function updateBasicData(int $userId, string $name, ?string $phone): bool {
         $stmt = $this->db->prepare("
             UPDATE users 
@@ -162,11 +139,6 @@ class UserModel {
         return $stmt->execute();
     }
 
-    /**
-     * Menonaktifkan akun user dengan mengubah kolom status menjadi 'deactivated'.
-     * @param int $userId ID internal user.
-     * @return bool True jika update sukses.
-     */
     public function deactivateAccount(int $userId): bool {
         $sql = "UPDATE {$this->tableName} SET status = 'deactivated', updated_at = NOW() WHERE id = :id";
         
@@ -174,15 +146,42 @@ class UserModel {
         return $stmt->execute([':id' => $userId]);
     }
 
-    /**
-     * Mengaktifkan kembali akun user dengan mengubah kolom status menjadi 'active'.
-     * @param int $userId ID internal user.
-     * @return bool True jika update sukses.
-     */
     public function reactivateAccount(int $userId): bool {
         $sql = "UPDATE {$this->tableName} SET status = 'active', updated_at = NOW() WHERE id = :id";
         
         $stmt = $this->db->prepare($sql);
         return $stmt->execute([':id' => $userId]);
+    }
+
+    // =================================================================
+    // SECURITY/LOGIN
+    // =================================================================
+
+    public function resetLoginAttempts(int $userId): bool {
+        $stmt = $this->db->prepare("
+            UPDATE users SET login_attempts = 0, is_suspended = 0, updated_at = NOW() WHERE id = :user_id
+        ");
+        $stmt->bindParam(':user_id', $userId);
+        return $stmt->execute();
+    }
+
+    public function incrementLoginAttempts(int $userId): bool {
+        $stmt = $this->db->prepare("
+            UPDATE users SET login_attempts = login_attempts + 1, updated_at = NOW() WHERE id = :user_id
+        ");
+        $stmt->bindParam(':user_id', $userId);
+        return $stmt->execute();
+    }
+
+    public function suspendAccount(int $userId): bool {
+        $stmt = $this->db->prepare("
+            UPDATE users SET 
+                is_suspended = 1, 
+                suspended_until = NULL, 
+                updated_at = NOW() 
+            WHERE id = :user_id
+        ");
+        $stmt->bindParam(':user_id', $userId);
+        return $stmt->execute();
     }
 }

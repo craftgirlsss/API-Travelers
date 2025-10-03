@@ -2,6 +2,7 @@
 // Controllers/ClientController.php
 require_once __DIR__ . '/../Models/ClientDetailModel.php';
 require_once __DIR__ . '/../Models/UserModel.php';
+require_once __DIR__ . '/../Helpers/FileHelper.php';
 
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Message\ResponseInterface as Response;
@@ -34,131 +35,30 @@ class ClientController {
 
         return $data ?? [];
     }
+    
+    // =================================================================
+    // GET /client/profile
+    // =================================================================
 
     /**
-     * Endpoint: PUT /client/profile/{uuid}
+     * Endpoint: GET /client/profile (Mengambil data profile pengguna yang sedang terautentikasi)
      */
-    public function updateClientProfile(Request $request, Response $response, array $args): Response {
-        try {
-            $data = $this->parseJsonInput($request);
-        } catch (\RuntimeException $e) {
-            $response->getBody()->write(json_encode([
-                'status' => 'error',
-                'message' => $e->getMessage()
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-        }
-
-        $requestedUserUuid = $args['uuid'] ?? null;
-
-        // --- 1. OTORISASI ---
+    public function getAuthenticatedClientProfile(Request $request, Response $response): Response {
         $jwtData = $request->getAttribute('jwt_data'); 
-        $authenticatedUserUuid = $jwtData['uuid'] ?? null;
-        $authenticatedUserId = $jwtData['id'] ?? null;
+        $authenticatedUserId = (int)($jwtData['id'] ?? 0);
         $authenticatedUserRole = $jwtData['role'] ?? 'guest';
 
-        $isAccessAllowed = (
-            $authenticatedUserRole === 'admin' || 
-            $authenticatedUserUuid === $requestedUserUuid
-        );
-
-        if (!$isAccessAllowed) {
-            $response->getBody()->write(json_encode([
+        if ($authenticatedUserId <= 0) {
+             $response->getBody()->write(json_encode([
                 'status' => 'error', 
-                'message' => 'Unauthorized access. You can only update your own profile.'
+                'message' => 'Unauthorized access. Token is missing or invalid.'
             ]));
-            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+            return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
         }
 
-        // --- 2. CEK USER TARGET ---
-        $userToUpdate = $this->userModel->findByUuid($requestedUserUuid);
-        if (!$userToUpdate || $userToUpdate['role'] !== 'customer') {
-            $response->getBody()->write(json_encode([
-                'status' => 'error', 
-                'message' => 'Invalid user or cannot edit non-client profile.'
-            ]));
-            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
-        }
-        $targetUserId = (int)$userToUpdate['id'];
-
-        // --- 3. VALIDASI INPUT DASAR ---
-        if (empty($data['name']) || empty($data['gender']) || empty($data['address'])) {
-            $response->getBody()->write(json_encode([
-                'status' => 'error', 
-                'message' => 'Name, gender, and address are required fields.'
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-        }
-
-        // --- 4. UPDATE DATA ---
-        $updateBasicSuccess = $this->userModel->updateBasicData(
-            $targetUserId,
-            $data['name'], 
-            $data['phone'] ?? $userToUpdate['phone']
-        );
-
-        $clientDetailsData = [
-            'gender' => $data['gender'],
-            'birth_date' => $data['birth_date'] ?? null, 
-            'address' => $data['address'],
-            'province' => $data['province'] ?? null,
-            'city' => $data['city'] ?? null,
-            'postal_code' => $data['postal_code'] ?? null,
-            'profile_picture_url' => $data['profile_picture_url'] ?? null,
-        ];
-
-        $updateDetailsSuccess = $this->clientDetailModel->updateOrCreate($targetUserId, $clientDetailsData);
-
-        if ($updateBasicSuccess || $updateDetailsSuccess) {
-            $updatedData = $this->clientDetailModel->getClientDetailByUuid($requestedUserUuid);
-
-            $response->getBody()->write(json_encode([
-                'status' => 'success', 
-                'message' => 'Client profile updated successfully.',
-                'data' => $updatedData
-            ]));
-            return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
-        }
-
-        $response->getBody()->write(json_encode([
-            'status' => 'error', 
-            'message' => 'Update failed. Data might be the same or a server error occurred.'
-        ]));
-        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
-    }
-
-    /**
-     * Endpoint: GET /client/profile/{uuid}
-     */
-    public function getClientProfile(Request $request, Response $response, array $args): Response {
-        $requestedUserUuid = $args['uuid'] ?? null; 
-
-        if (!$requestedUserUuid) {
-            $response->getBody()->write(json_encode([
-                'status' => 'error', 
-                'message' => 'User identifier (UUID) is required.'
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
-        }
-
-        $jwtData = $request->getAttribute('jwt_data'); 
-        $authenticatedUserUuid = $jwtData['uuid'] ?? null;
-        $authenticatedUserRole = $jwtData['role'] ?? 'guest';
-
-        $isAccessAllowed = (
-            $authenticatedUserRole === 'admin' || 
-            $authenticatedUserUuid === $requestedUserUuid
-        );
-
-        if (!$isAccessAllowed) {
-            $response->getBody()->write(json_encode([
-                'status' => 'error', 
-                'message' => 'Unauthorized access. You can only view your own profile.'
-            ]));
-            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
-        }
-
-        $detail = $this->clientDetailModel->getClientDetailByUuid($requestedUserUuid); 
+        // --- 1. AMBIL DETAIL DARI CLIENT_DETAILS ---
+        // Asumsi: getClientDetailByUserId ada di ClientDetailModel (TOLONG PASTIKAN METHOD INI ADA)
+        $detail = $this->clientDetailModel->getClientDetailByUserId($authenticatedUserId); 
 
         if ($detail) {
             $response->getBody()->write(json_encode([
@@ -168,7 +68,10 @@ class ClientController {
             return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
         } 
         
-        $user = $this->userModel->findByUuid($requestedUserUuid); 
+        // --- 2. FALLBACK KE DATA DASAR USER (JIKA CLIENT_DETAILS KOSONG) ---
+        // Menggunakan method getUserProfileById yang aman (TOLONG PASTIKAN METHOD INI ADA DI USERMODEL)
+        $user = $this->userModel->getUserProfileById($authenticatedUserId); 
+        
         if (!$user) {
              $response->getBody()->write(json_encode([
                  'status' => 'error', 
@@ -184,37 +87,126 @@ class ClientController {
                 'name' => $user['name'],
                 'email' => $user['email'],
                 'phone' => $user['phone'],
-                'role' => $user['role'],
+                'role' => $authenticatedUserRole,
+                'profile_picture_url' => $user['profile_picture_path'] ?? null,
                 'message' => 'Client details not set yet. Basic user data returned.'
             ]
         ];
         $response->getBody()->write(json_encode($output));
         return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
     }
+    
+    // =================================================================
+    // PUT /client/profile
+    // =================================================================
 
-    public function deactivateClientAccount(Request $request, Response $response, array $args): Response {
-        $requestedUserUuid = $args['uuid'] ?? null;
-        
-        // --- 1. OTORISASI ---
-        $jwtData = $request->getAttribute('jwt_data'); 
-        $authenticatedUserUuid = $jwtData['uuid'] ?? null;
-        $authenticatedUserRole = $jwtData['role'] ?? 'guest';
+    /**
+     * Endpoint: PUT /client/profile (Memperbarui data profile pengguna yang sedang terautentikasi)
+     */
+    public function updateAuthenticatedClientProfile(Request $request, Response $response): Response {
+        try {
+            // --- 1. OTORISASI ---
+            $jwtData = $request->getAttribute('jwt_data'); 
+            $authenticatedUserId = (int)($jwtData['id'] ?? 0);
+            $authenticatedUserRole = $jwtData['role'] ?? 'guest';
 
-        $isAccessAllowed = (
-            $authenticatedUserRole === 'admin' || 
-            $authenticatedUserUuid === $requestedUserUuid
-        );
+            if ($authenticatedUserId <= 0) {
+                 throw new \Exception('Unauthorized access.', 401);
+            }
+            
+            $data = $this->parseJsonInput($request);
 
-        if (!$isAccessAllowed) {
+        } catch (\RuntimeException $e) {
             $response->getBody()->write(json_encode([
-                'status' => 'error', 
-                'message' => 'Unauthorized access. You can only deactivate your own account.'
+                'status' => 'error',
+                'message' => $e->getMessage()
             ]));
-            return $response->withStatus(403)->withHeader('Content-Type', 'application/json');
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        } catch (\Exception $e) {
+            return $response->withStatus(401)->withHeader('Content-Type', 'application/json')->getBody()->write(json_encode(['status' => 'error', 'message' => 'Unauthorized access.']));
         }
 
         // --- 2. CEK USER TARGET ---
-        $userToDeactivate = $this->userModel->findByUuid($requestedUserUuid);
+        // Menggunakan findByUserId untuk mendapatkan semua data (termasuk role, status, dll.)
+        $userToUpdate = $this->userModel->findByUserId($authenticatedUserId); 
+        
+        if (!$userToUpdate || $userToUpdate['role'] !== 'customer') {
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'message' => 'Invalid user or cannot edit non-client profile.'
+            ]));
+            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+        }
+
+        // --- 3. VALIDASI INPUT DASAR ---
+        if (empty($data['name']) || empty($data['gender']) || empty($data['address'])) {
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'message' => 'Name, gender, and address are required fields.'
+            ]));
+            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        }
+
+        // --- 4. UPDATE DATA ---
+        $updateBasicSuccess = $this->userModel->updateBasicData(
+            $authenticatedUserId,
+            $data['name'], 
+            $data['phone'] ?? $userToUpdate['phone']
+        );
+
+        $clientDetailsData = [
+            'gender' => $data['gender'],
+            'birth_date' => $data['birth_date'] ?? null, 
+            'address' => $data['address'],
+            'province' => $data['province'] ?? null,
+            'city' => $data['city'] ?? null,
+            'postal_code' => $data['postal_code'] ?? null,
+            'profile_picture_url' => $data['profile_picture_url'] ?? null,
+        ];
+
+        // Asumsi: ClientDetailModel->updateOrCreate menggunakan ID internal
+        $updateDetailsSuccess = $this->clientDetailModel->updateOrCreate($authenticatedUserId, $clientDetailsData);
+
+        if ($updateBasicSuccess || $updateDetailsSuccess) {
+            $updatedData = $this->userModel->getUserProfileById($authenticatedUserId);
+
+            $response->getBody()->write(json_encode([
+                'status' => 'success', 
+                'message' => 'Client profile updated successfully.',
+                'data' => $updatedData
+            ]));
+            return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
+        }
+
+        $response->getBody()->write(json_encode([
+            'status' => 'error', 
+            'message' => 'Update failed. Data might be the same or a server error occurred.'
+        ]));
+        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    }
+    
+    // =================================================================
+    // DELETE /client/account
+    // =================================================================
+
+    /**
+     * Endpoint: DELETE /client/account (Menonaktifkan akun pengguna yang sedang terautentikasi)
+     */
+    public function deactivateAuthenticatedClientAccount(Request $request, Response $response): Response {
+        $jwtData = $request->getAttribute('jwt_data'); 
+        $authenticatedUserId = (int)($jwtData['id'] ?? 0);
+
+        if ($authenticatedUserId <= 0) {
+            $response->getBody()->write(json_encode([
+                'status' => 'error', 
+                'message' => 'Unauthorized access. Token is missing or invalid.'
+            ]));
+            return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+        }
+
+        // --- 1. CEK USER TARGET ---
+        $userToDeactivate = $this->userModel->findByUserId($authenticatedUserId); 
+        
         if (!$userToDeactivate || $userToDeactivate['role'] !== 'customer') {
             $response->getBody()->write(json_encode([
                 'status' => 'error', 
@@ -222,7 +214,6 @@ class ClientController {
             ]));
             return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
         }
-        $targetUserId = (int)$userToDeactivate['id'];
         
         // Cek apakah akun sudah nonaktif
         if ($userToDeactivate['status'] === 'deactivated') {
@@ -233,9 +224,8 @@ class ClientController {
             return $response->withStatus(409)->withHeader('Content-Type', 'application/json');
         }
 
-
-        // --- 3. NONAKTIFKAN AKUN ---
-        $deactivateSuccess = $this->userModel->deactivateAccount($targetUserId);
+        // --- 2. NONAKTIFKAN AKUN ---
+        $deactivateSuccess = $this->userModel->deactivateAccount($authenticatedUserId);
 
         if ($deactivateSuccess) {
             $response->getBody()->write(json_encode([

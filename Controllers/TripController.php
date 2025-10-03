@@ -14,6 +14,11 @@ class TripController {
 
     /**
      * Endpoint: GET /trips
+     * Menggunakan UUID di output.
+     */
+    /**
+     * Endpoint: GET /trips
+     * Menggunakan UUID di output.
      */
     public function getTrips(Request $request, Response $response): Response {
         try {
@@ -21,7 +26,7 @@ class TripController {
 
             $data = array_map(function($trip) {
                 return [
-                    'id' => (int)$trip['id'],
+                    'uuid' => $trip['uuid'],
                     'title' => $trip['title'],
                     'duration' => $trip['duration'],
                     'location' => $trip['location'],
@@ -31,10 +36,12 @@ class TripController {
                     'booked_participants' => (int)$trip['booked_participants'],
                     'remaining_seats' => (int)$trip['remaining_seats'],
                     'start_date' => $trip['start_date'],
+                    // --- BARIS BARU DITAMBAHKAN ---
+                    'main_image_url' => $trip['main_image_url'], 
+                    // -----------------------------
                     'provider' => [
-                        'id' => (int)$trip['provider_id'],
-                        "company_name" => $trip['provider_company_name'],
-                        "company_logo_path" => $trip['provider_company_logo_path']
+                        'company_name' => $trip['provider_company_name'],
+                        'company_logo_path' => $trip['provider_company_logo_path']
                     ]
                 ];
             }, $trips);
@@ -54,6 +61,10 @@ class TripController {
         }
     }
 
+    /**
+     * Endpoint: GET /trips/search?location=...
+     * Menggunakan UUID di output.
+     */
     public function searchTripsByLocation(Request $request, Response $response): Response {
         try {
             $params = $request->getQueryParams();
@@ -71,7 +82,7 @@ class TripController {
 
             $data = array_map(function($trip) {
                 return [
-                    'id' => (int)$trip['id'],
+                    'uuid' => $trip['uuid'], // <--- Mengganti 'id' menjadi 'uuid' (string)
                     'title' => $trip['title'],
                     'duration' => $trip['duration'],
                     'location' => $trip['location'],
@@ -82,7 +93,6 @@ class TripController {
                     'remaining_seats' => (int)$trip['remaining_seats'],
                     'start_date' => $trip['start_date'],
                     'provider' => [
-                        'id' => (int)$trip['provider_id'],
                         'company_name' => $trip['provider_company_name'],
                         'company_logo_path' => $trip['provider_company_logo_path']
                     ]
@@ -105,6 +115,10 @@ class TripController {
         }
     }
 
+    /**
+     * Endpoint: GET /trips/search?q=...
+     * Menggunakan UUID di output.
+     */
     public function searchTripsByGatheringPoint(Request $request, Response $response): Response {
         try {
             $params = $request->getQueryParams();
@@ -122,7 +136,7 @@ class TripController {
 
             $data = array_map(function($trip) {
                 return [
-                    'id' => (int)$trip['id'],
+                    'uuid' => $trip['uuid'], // <--- Mengganti 'id' menjadi 'uuid' (string)
                     'title' => $trip['title'],
                     'duration' => $trip['duration'],
                     'location' => $trip['location'],
@@ -134,7 +148,6 @@ class TripController {
                     'remaining_seats' => (int)$trip['remaining_seats'],
                     'start_date' => $trip['start_date'],
                     'provider' => [
-                        'id' => isset($trip['provider_id']) ? (int)$trip['provider_id'] : null,
                         'company_name' => $trip['provider_company_name'] ?? null,
                         'company_logo_path' => $trip['provider_company_logo_path'] ?? null
                     ]
@@ -153,24 +166,41 @@ class TripController {
         }
     }
 
+    /**
+     * Endpoint: GET /trips/{uuid}
+     * Mengambil UUID dari URL dan memanggil Model yang sesuai.
+     */
     public function getTripDetail(Request $request, Response $response, array $args): Response {
         try {
-            $id = (int)$args['id'];
-            $trip = $this->tripModel->getTripById($id);
+            // Ambil argumen UUID dari URL. Key harus 'uuid' sesuai route {uuid}
+            $uuid = $args['uuid'] ?? null; 
+            
+            // Log untuk debug (Opsional, hapus di production)
+            // error_log("Trying to find trip with UUID: " . ($uuid ?? 'NULL/EMPTY')); 
+
+            if (empty($uuid)) {
+                $response->getBody()->write(json_encode([
+                    'status' => 'failed',
+                    'success' => false,
+                    'message' => 'UUID Trip tidak valid. (UUID Kosong)'
+                ]));
+                return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+            }
+
+            $trip = $this->tripModel->getTripDetailByUuid($uuid);
 
             if (!$trip) {
                 $response->getBody()->write(json_encode([
                     'status' => 'failed',
                     'success' => false,
-                    'message' => "Trip dengan ID {$id} tidak ditemukan atau belum approved"
+                    'message' => 'UUID Trip tidak valid.' 
                 ]));
-                return $response
-                    ->withHeader('Content-Type', 'application/json')
-                    ->withStatus(400);
+                return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
             }
 
+            // --- PERUBAHAN UTAMA DI SINI: MENAMBAHKAN ARRAY 'images' ---
             $data = [
-                'id' => (int)$trip['id'],
+                'uuid' => $trip['uuid'],
                 'title' => $trip['title'],
                 'description' => $trip['description'],
                 'duration' => $trip['duration'],
@@ -189,17 +219,18 @@ class TripController {
                 'created_at' => $trip['created_at'],
                 'updated_at' => $trip['updated_at'],
                 'provider' => [
-                    'id' => (int)$trip['provider_id'],
                     'email' => $trip['provider_email'],
                     'company_name' => $trip['provider_company_name'],
                     'company_logo_path' => $trip['provider_company_logo_path']
-                ]
+                ],
+                // DATA BARU: Daftar Gambar dari TripModel
+                'images' => $trip['images'] ?? [] 
             ];
 
             $response->getBody()->write(json_encode([
                 'status' => 'success',
                 'success' => true,
-                'message' => 'Berhasil mendaptakan data',
+                'message' => 'Berhasil mendapatkan data',
                 'data' => $data
             ]));
             return $response->withHeader('Content-Type', 'application/json')->withStatus(200);

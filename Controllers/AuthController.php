@@ -58,7 +58,7 @@ class AuthController {
         // --- 3. Panggil Model untuk menyimpan data
         $newUserId = null;
         try {
-            $newUserId = $this->userModel->create(
+            $newUserId = $this->userModel->registerNewUser( 
                 $data['email'], 
                 $hashedPassword, 
                 $data['name'], 
