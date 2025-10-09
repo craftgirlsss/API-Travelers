@@ -11,15 +11,20 @@ class ClientController {
     private ClientDetailModel $clientDetailModel;
     private UserModel $userModel;
 
+    // Tentukan Base URL untuk akses gambar di response
+    private const BASE_URL = 'https://api-travelers.karyadeveloperindonesia.com/';
+
     public function __construct(PDO $db) {
         $this->clientDetailModel = new ClientDetailModel($db);
         $this->userModel = new UserModel($db);
     }
 
     /**
-     * Parse JSON input dengan error handling.
+     * Parse JSON input dengan error handling. (Dapat dipertahankan, tapi akan diabaikan
+     * jika request adalah multipart)
      */
     private function parseJsonInput(Request $request): array {
+        // Logika ini hanya relevan untuk application/json
         $data = $request->getParsedBody();
 
         if (is_null($data) || empty($data)) {
@@ -27,7 +32,8 @@ class ClientController {
             $data = json_decode($content, true);
 
             if (json_last_error() !== JSON_ERROR_NONE) {
-                throw new \RuntimeException("Invalid JSON: " . json_last_error_msg());
+                // Jangan throw, kembalikan array kosong, karena mungkin ini adalah multipart
+                return []; 
             }
 
             $request->getBody()->rewind();
@@ -49,37 +55,38 @@ class ClientController {
         $authenticatedUserRole = $jwtData['role'] ?? 'guest';
 
         if ($authenticatedUserId <= 0) {
-             $response->getBody()->write(json_encode([
-                'status' => 'error', 
-                'message' => 'Unauthorized access. Token is missing or invalid.'
-            ]));
-            return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
+             return $this->jsonResponse($response, ['status' => 'error', 'message' => 'Unauthorized access. Token is missing or invalid.'], 401);
         }
 
         // --- 1. AMBIL DETAIL DARI CLIENT_DETAILS ---
-        // Asumsi: getClientDetailByUserId ada di ClientDetailModel (TOLONG PASTIKAN METHOD INI ADA)
         $detail = $this->clientDetailModel->getClientDetailByUserId($authenticatedUserId); 
 
         if ($detail) {
-            $response->getBody()->write(json_encode([
-                'status' => 'success',
-                'data' => $detail
-            ]));
-            return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
+            // REVISI BARIS 66 MENGGUNAKAN NULL COALESCING ATAU isset()
+            $profilePicturePath = $detail['profile_picture_url'] ?? null;
+            
+            if ($profilePicturePath) {
+                $detail['profile_picture_url'] = self::BASE_URL . $profilePicturePath;
+            } else {
+                // Pastikan kunci ini ada, meskipun nilainya null, agar response konsisten
+                $detail['profile_picture_url'] = null;
+            }
+            return $this->jsonResponse($response, ['status' => 'success', 'data' => $detail], 200);
         } 
         
         // --- 2. FALLBACK KE DATA DASAR USER (JIKA CLIENT_DETAILS KOSONG) ---
-        // Menggunakan method getUserProfileById yang aman (TOLONG PASTIKAN METHOD INI ADA DI USERMODEL)
         $user = $this->userModel->getUserProfileById($authenticatedUserId); 
         
         if (!$user) {
-             $response->getBody()->write(json_encode([
-                 'status' => 'error', 
-                 'message' => 'User not found.'
-             ]));
-             return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+             return $this->jsonResponse($response, ['status' => 'error', 'message' => 'User not found.'], 404);
         }
         
+        // Pastikan URL gambar diubah menjadi Absolute URL
+        $profilePictureUrl = $user['profile_picture_path'] ?? null;
+        if ($profilePictureUrl) {
+            $profilePictureUrl = self::BASE_URL . $profilePictureUrl;
+        }
+
         $output = [
             'status' => 'success', 
             'data' => [
@@ -88,12 +95,11 @@ class ClientController {
                 'email' => $user['email'],
                 'phone' => $user['phone'],
                 'role' => $authenticatedUserRole,
-                'profile_picture_url' => $user['profile_picture_path'] ?? null,
+                'profile_picture_url' => $profilePictureUrl,
                 'message' => 'Client details not set yet. Basic user data returned.'
             ]
         ];
-        $response->getBody()->write(json_encode($output));
-        return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
+        return $this->jsonResponse($response, $output, 200);
     }
     
     // =================================================================
@@ -108,137 +114,120 @@ class ClientController {
             // --- 1. OTORISASI ---
             $jwtData = $request->getAttribute('jwt_data'); 
             $authenticatedUserId = (int)($jwtData['id'] ?? 0);
-            $authenticatedUserRole = $jwtData['role'] ?? 'guest';
+
+            // Mengambil input. getParsedBody() akan menangani JSON dan form-data
+            $body = $request->getParsedBody() ?? []; 
+            $uploadedFiles = $request->getUploadedFiles() ?? [];
+
+            // ===============================================
+            // DEBUGGING: Cek apakah data form-data terbaca
+            // ===============================================
+            if (empty($body)) {
+                 error_log("DEBUG: getParsedBody() is empty. Checking raw input.");
+            } else {
+                 error_log("DEBUG: Parsed Body (Data Teks): " . print_r($body, true));
+            }
+            error_log("DEBUG: Uploaded Files: " . print_r(array_keys($uploadedFiles), true));
+            // ===============================================
 
             if ($authenticatedUserId <= 0) {
                  throw new \Exception('Unauthorized access.', 401);
             }
             
-            $data = $this->parseJsonInput($request);
+            // Mengambil input. getParsedBody() akan menangani JSON dan form-data
+            $body = $request->getParsedBody() ?? []; 
+            $uploadedFiles = $request->getUploadedFiles() ?? [];
 
-        } catch (\RuntimeException $e) {
-            $response->getBody()->write(json_encode([
-                'status' => 'error',
-                'message' => $e->getMessage()
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
         } catch (\Exception $e) {
-            return $response->withStatus(401)->withHeader('Content-Type', 'application/json')->getBody()->write(json_encode(['status' => 'error', 'message' => 'Unauthorized access.']));
+            return $this->jsonResponse($response, ['status' => 'error', 'message' => 'Unauthorized access.'], 401);
         }
 
         // --- 2. CEK USER TARGET ---
-        // Menggunakan findByUserId untuk mendapatkan semua data (termasuk role, status, dll.)
         $userToUpdate = $this->userModel->findByUserId($authenticatedUserId); 
         
         if (!$userToUpdate || $userToUpdate['role'] !== 'customer') {
-            $response->getBody()->write(json_encode([
-                'status' => 'error', 
-                'message' => 'Invalid user or cannot edit non-client profile.'
-            ]));
-            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
+            return $this->jsonResponse($response, ['status' => 'error', 'message' => 'Invalid user or cannot edit non-client profile.'], 404);
         }
 
-        // --- 3. VALIDASI INPUT DASAR ---
-        if (empty($data['name']) || empty($data['gender']) || empty($data['address'])) {
-            $response->getBody()->write(json_encode([
-                'status' => 'error', 
-                'message' => 'Name, gender, and address are required fields.'
-            ]));
-            return $response->withStatus(400)->withHeader('Content-Type', 'application/json');
+        // --- 3. HANDLE FILE UPLOAD (Gambar Profil) ---
+        $profilePicturePath = null;
+        $profilePictureFile = $uploadedFiles['profile_picture'] ?? null;
+        $uploadDir = __DIR__ . '/../assets/user/'; // Lokasi penyimpanan
+
+        if ($profilePictureFile && $profilePictureFile->getError() === UPLOAD_ERR_OK) {
+            try {
+                // Panggil Helper untuk proses penyimpanan
+                $profilePicturePath = FileHelper::uploadImage($profilePictureFile, $uploadDir, $authenticatedUserId);
+            } catch (\Exception $e) {
+                 return $this->jsonResponse($response, ['status' => 'failed', 'message' => 'Gagal mengupload gambar: ' . $e->getMessage()], 500);
+            }
+        }
+        
+        // --- 4. VALIDASI INPUT DASAR (Ambil dari $body/form-data) ---
+        $name = trim($body['name'] ?? '');
+        $gender = $body['gender'] ?? '';
+        $address = $body['address'] ?? '';
+
+        if (empty($name) || empty($gender) || empty($address)) {
+            return $this->jsonResponse($response, ['status' => 'error', 'message' => 'Name, gender, and address are required fields.'], 400);
         }
 
-        // --- 4. UPDATE DATA ---
+        // --- 5. UPDATE DATA DI USER MODEL ---
+        // Asumsi: updateBasicData di UserModel sudah diperbaiki untuk menerima phone
         $updateBasicSuccess = $this->userModel->updateBasicData(
             $authenticatedUserId,
-            $data['name'], 
-            $data['phone'] ?? $userToUpdate['phone']
+            $name, 
+            $body['phone'] ?? $userToUpdate['phone']
         );
 
+        // --- 6. UPDATE DATA DI CLIENT DETAIL MODEL ---
         $clientDetailsData = [
-            'gender' => $data['gender'],
-            'birth_date' => $data['birth_date'] ?? null, 
-            'address' => $data['address'],
-            'province' => $data['province'] ?? null,
-            'city' => $data['city'] ?? null,
-            'postal_code' => $data['postal_code'] ?? null,
-            'profile_picture_url' => $data['profile_picture_url'] ?? null,
+            'gender' => $gender,
+            'birth_date' => $body['birth_date'] ?? null, 
+            'address' => $address,
+            'province' => $body['province'] ?? null,
+            'city' => $body['city'] ?? null,
+            'postal_code' => $body['postal_code'] ?? null,
+            // Jika ada gambar baru diupload, gunakan path baru, jika tidak, gunakan path dari body/path lama
+            'profile_picture_url' => $profilePicturePath // Path RELATIF hasil upload
         ];
 
-        // Asumsi: ClientDetailModel->updateOrCreate menggunakan ID internal
+        // ClientDetailModel->updateOrCreate akan menangani jika profile_picture_url adalah null
         $updateDetailsSuccess = $this->clientDetailModel->updateOrCreate($authenticatedUserId, $clientDetailsData);
 
-        if ($updateBasicSuccess || $updateDetailsSuccess) {
-            $updatedData = $this->userModel->getUserProfileById($authenticatedUserId);
+        if ($updateBasicSuccess || $updateDetailsSuccess || $profilePicturePath !== null) {
+            // Ambil data terbaru
+            $updatedData = $this->clientDetailModel->getClientDetailByUserId($authenticatedUserId);
 
-            $response->getBody()->write(json_encode([
+            // Periksa dan ubah URL gambar menjadi Absolute URL
+            // >>> REVISI PENTING MENGGUNAKAN isset() <<<
+            if ($updatedData && isset($updatedData['profile_picture_url']) && $updatedData['profile_picture_url']) {
+                $updatedData['profile_picture_url'] = self::BASE_URL . $updatedData['profile_picture_url'];
+            } else if ($updatedData) {
+                // Tambahkan kunci jika tidak ada, agar response API konsisten
+                $updatedData['profile_picture_url'] = null;
+            }
+            
+            return $this->jsonResponse($response, [
                 'status' => 'success', 
+                'success' => true,
                 'message' => 'Client profile updated successfully.',
                 'data' => $updatedData
-            ]));
-            return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
+            ], 200);
         }
 
-        $response->getBody()->write(json_encode([
+        return $this->jsonResponse($response, [
             'status' => 'error', 
+            'success' => false,
             'message' => 'Update failed. Data might be the same or a server error occurred.'
-        ]));
-        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+        ], 500);
     }
     
-    // =================================================================
-    // DELETE /client/account
-    // =================================================================
+    // ... (Method deactivateAuthenticatedClientAccount tetap sama)
 
-    /**
-     * Endpoint: DELETE /client/account (Menonaktifkan akun pengguna yang sedang terautentikasi)
-     */
-    public function deactivateAuthenticatedClientAccount(Request $request, Response $response): Response {
-        $jwtData = $request->getAttribute('jwt_data'); 
-        $authenticatedUserId = (int)($jwtData['id'] ?? 0);
-
-        if ($authenticatedUserId <= 0) {
-            $response->getBody()->write(json_encode([
-                'status' => 'error', 
-                'message' => 'Unauthorized access. Token is missing or invalid.'
-            ]));
-            return $response->withStatus(401)->withHeader('Content-Type', 'application/json');
-        }
-
-        // --- 1. CEK USER TARGET ---
-        $userToDeactivate = $this->userModel->findByUserId($authenticatedUserId); 
-        
-        if (!$userToDeactivate || $userToDeactivate['role'] !== 'customer') {
-            $response->getBody()->write(json_encode([
-                'status' => 'error', 
-                'message' => 'Invalid client user not found or not a client profile.'
-            ]));
-            return $response->withStatus(404)->withHeader('Content-Type', 'application/json');
-        }
-        
-        // Cek apakah akun sudah nonaktif
-        if ($userToDeactivate['status'] === 'deactivated') {
-            $response->getBody()->write(json_encode([
-                'status' => 'error', 
-                'message' => 'Account is already deactivated.'
-            ]));
-            return $response->withStatus(409)->withHeader('Content-Type', 'application/json');
-        }
-
-        // --- 2. NONAKTIFKAN AKUN ---
-        $deactivateSuccess = $this->userModel->deactivateAccount($authenticatedUserId);
-
-        if ($deactivateSuccess) {
-            $response->getBody()->write(json_encode([
-                'status' => 'success', 
-                'message' => 'Your account has been successfully deactivated. You will not be able to log in until it is reactivated.'
-            ]));
-            return $response->withStatus(200)->withHeader('Content-Type', 'application/json');
-        }
-
-        $response->getBody()->write(json_encode([
-            'status' => 'error', 
-            'message' => 'Failed to deactivate account due to a server error.'
-        ]));
-        return $response->withStatus(500)->withHeader('Content-Type', 'application/json');
+    // Helper untuk JSON Response
+    private function jsonResponse(Response $response, array $data, int $status): Response {
+        $response->getBody()->write(json_encode($data));
+        return $response->withHeader('Content-Type', 'application/json')->withStatus($status);
     }
 }

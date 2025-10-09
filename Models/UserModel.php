@@ -14,22 +14,17 @@ class UserModel {
     // =================================================================
     /**
      * Menggunakan fungsi bawaan PHP untuk membuat UUID V4 secara pseudo-random.
-     * Digunakan sebagai pengganti ramsey/uuid.
      */
     private function generateUuid(): string {
         try {
             $data = random_bytes(16);
         } catch (\Exception $e) {
-            // Fallback jika random_bytes gagal (jarang terjadi)
             $data = openssl_random_pseudo_bytes(16);
         }
         
-        // Atur versi ke 0100 (UUID versi 4)
         $data[6] = chr(ord($data[6]) & 0x0f | 0x40); 
-        // Atur clock_seq_hi_and_reserved ke 10 (RFC 4122)
         $data[8] = chr(ord($data[8]) & 0x3f | 0x80); 
 
-        // Format sebagai string UUID standar: 8-4-4-4-12 karakter
         return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
     
@@ -49,7 +44,7 @@ class UserModel {
      * Mengambil data user berdasarkan ID internal (dibutuhkan AuthController setelah create).
      */
     public function findByUserId(int $userId): array|false {
-        $stmt = $this->db->prepare("SELECT id, uuid, name, email, role FROM users WHERE id = :id");
+        $stmt = $this->db->prepare("SELECT id, uuid, name, email, role, phone, status FROM users WHERE id = :id");
         $stmt->bindParam(':id', $userId, PDO::PARAM_INT);
         $stmt->execute();
         return $stmt->fetch(PDO::FETCH_ASSOC);
@@ -62,7 +57,7 @@ class UserModel {
                 name, 
                 email, 
                 phone, 
-                profile_picture_path, 
+                profile_picture_path, /* Kolom ini sudah benar */
                 created_at,
                 updated_at
             FROM users 
@@ -81,7 +76,6 @@ class UserModel {
 
     /**
      * Membuat record user baru di database, termasuk UUID.
-     * Nama diganti menjadi registerNewUser untuk menghindari bentrok dengan framework.
      */
     public function registerNewUser(string $email, string $hashedPassword, string $name, ?string $phone = null, string $role = 'customer'): int|false {
         
@@ -107,7 +101,6 @@ class UserModel {
             }
             return false;
         } catch (\PDOException $e) {
-            // Lempar Exception untuk ditangkap di Controller (misalnya Duplicate Entry)
             throw $e; 
         }
     }
@@ -123,20 +116,42 @@ class UserModel {
         return $stmt->execute();
     }
     
-    // ... (Method CRUD lainnya seperti updateBasicData, deactivateAccount, reactivateAccount)
-    
-    public function updateBasicData(int $userId, string $name, ?string $phone): bool {
-        $stmt = $this->db->prepare("
-            UPDATE users 
-            SET name = :name, phone = :phone, updated_at = NOW() 
+    /**
+     * REVISI: Mengupdate data dasar user, termasuk menambahkan profile_picture_path.
+     */
+    public function updateBasicData(int $userId, string $name, ?string $phone, ?string $profilePicturePath = null): bool {
+        
+        $fields = ['name = :name', 'updated_at = NOW()'];
+        $params = [
+            ':name' => $name,
+            ':id' => $userId
+        ];
+
+        // Tambahkan phone jika disediakan
+        if ($phone !== null) {
+            $fields[] = 'phone = :phone';
+            $params[':phone'] = $phone;
+        }
+
+        // Tambahkan profile_picture_path jika file baru diupload (tidak null)
+        if ($profilePicturePath !== null) {
+            $fields[] = 'profile_picture_path = :path';
+            $params[':path'] = $profilePicturePath;
+        }
+
+        $sql = "
+            UPDATE {$this->tableName} 
+            SET " . implode(', ', $fields) . " 
             WHERE id = :id
-        ");
+        ";
         
-        $stmt->bindParam(':name', $name);
-        $stmt->bindParam(':phone', $phone);
-        $stmt->bindParam(':id', $userId);
-        
-        return $stmt->execute();
+        try {
+            $stmt = $this->db->prepare($sql);
+            return $stmt->execute($params);
+        } catch (\PDOException $e) {
+            error_log("SQL Error in updateBasicData: " . $e->getMessage());
+            throw $e;
+        }
     }
 
     public function deactivateAccount(int $userId): bool {

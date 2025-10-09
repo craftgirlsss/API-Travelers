@@ -35,8 +35,6 @@ $app->post('/verify-otp', function ($request, $response) use ($db) {
     return (new AuthController($db))->verifyOTP($request, $response);
 });
 
-// HAPUS RUTE DELETE YANG DI LUAR GROUP DI SINI, pindahkan ke Bawah (Bagian 2)
-
 // --- RUTE BARU: RESEND OTP ---
 $app->post('/resend-otp', function ($request, $response) use ($db) {
     return (new AuthController($db))->resendOTP($request, $response);
@@ -78,8 +76,8 @@ $app->group('', function (RouteCollectorProxy $group) use ($db) {
         return $clientController->getAuthenticatedClientProfile($request, $response);
     })->add(new RoleMiddleware(['admin', 'customer']));
 
-    // PUT /client/profile (Edit profile sendiri - TIDAK PAKAI UUID DI URL)
-    $group->put('/client/profile', function ($request, $response) use ($clientController) {
+    // >>> PERUBAHAN KRUSIAL: MENGGANTI PUT MENJADI POST UNTUK MENGATASI MULTIPART/FORM-DATA
+    $group->post('/client/profile', function ($request, $response) use ($clientController) {
         return $clientController->updateAuthenticatedClientProfile($request, $response);
     })->add(new RoleMiddleware(['admin', 'customer']));
 
